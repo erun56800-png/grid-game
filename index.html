@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Grid Game - Multijoueur</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ÉCRAN D'ACCUEIL -->
+  <div id="screen-login" class="screen active">
+    <div class="login-box">
+      <h1>🎮 Grid Game</h1>
+      <p>Collectez 20 objets pour gagner !</p>
+      <input type="text" id="player-name" placeholder="Votre pseudo" maxlength="12">
+      <input type="text" id="room-code" placeholder="Code de partie (ex: ROOM1)" maxlength="8">
+      <button id="btn-join" onclick="joinGame()">Rejoindre / Créer une partie</button>
+      <div id="login-error" class="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- ÉCRAN DE JEU -->
+  <div id="screen-game" class="screen">
+
+    <!-- PANNEAU GAUCHE : Infos -->
+    <div id="panel-left">
+      <div id="room-info">
+        <h2>Partie : <span id="display-room"></span></h2>
+        <p>Joueur : <span id="display-player"></span></p>
+      </div>
+
+      <div id="scores-panel">
+        <h3>📊 Scores</h3>
+        <div id="scores-list"></div>
+      </div>
+
+      <div id="turn-info">
+        <h3>⏱ Tour actuel</h3>
+        <p>Joueur actif : <span id="current-player-name">-</span></p>
+        <p>Déplacements restants : <span id="moves-left">-</span></p>
+        <p>Objets collectés : <span id="my-score">0</span> / 20</p>
+      </div>
+
+      <div id="log-panel">
+        <h3>📜 Journal</h3>
+        <div id="log-list"></div>
+      </div>
+    </div>
+
+    <!-- PANNEAU CENTRE : Plateau -->
+    <div id="panel-center">
+      <div id="grid-container">
+        <canvas id="game-canvas" width="500" height="500"></canvas>
+      </div>
+
+      <!-- CONTRÔLES -->
+      <div id="controls">
+        <div id="controls-grid">
+          <button class="ctrl-btn" onclick="playerAction('turnLeft')" title="Pivoter gauche">↺</button>
+          <button class="ctrl-btn" onclick="playerAction('forward')" title="Avancer">⬆</button>
+          <button class="ctrl-btn" onclick="playerAction('turnRight')" title="Pivoter droite">↻</button>
+          <button class="ctrl-btn empty"></button>
+          <button class="ctrl-btn" onclick="playerAction('backward')" title="Reculer">⬇</button>
+          <button class="ctrl-btn empty"></button>
+          <button class="ctrl-btn pickup-btn" onclick="playerAction('pickup')" title="Ramasser">📦 Ramasser</button>
+        </div>
+        <button id="btn-end-turn" onclick="endTurn()">✅ Terminer mon tour</button>
+      </div>
+    </div>
+
+    <!-- PANNEAU DROIT : Légende -->
+    <div id="panel-right">
+      <h3>🗺 Légende</h3>
+      <div class="legend-item"><span class="legend-color" style="background:#4CAF50"></span> Vous</div>
+      <div class="legend-item"><span class="legend-color" style="background:#2196F3"></span> Autres joueurs</div>
+      <div class="legend-item"><span class="legend-color" style="background:#FF9800"></span> Objet ⭐</div>
+      <div class="legend-item"><span class="legend-color" style="background:#333"></span> Case vide</div>
+
+      <h3 style="margin-top:20px">📋 Règles</h3>
+      <ul id="rules-list">
+        <li>⬆ Avancer d'une case</li>
+        <li>⬇ Reculer d'une case</li>
+        <li>↺↻ Pivoter 90°</li>
+        <li>📦 Ramasser un objet</li>
+        <li>1-10 déplacements/tour</li>
+        <li>Les inutilisés s'accumulent</li>
+        <li>🏆 Premier à 20 objets gagne !</li>
+      </ul>
+
+      <div id="waiting-msg" style="display:none">
+        <div class="spinner"></div>
+        <p>En attente des autres joueurs...</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- MODAL VICTOIRE -->
+  <div id="modal-win" class="modal" style="display:none">
+    <div class="modal-content">
+      <h1>🏆 Victoire !</h1>
+      <p id="win-message"></p>
+      <button onclick="location.reload()">Nouvelle partie</button>
+    </div>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
