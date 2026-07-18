@@ -268,6 +268,12 @@ body {
 }
 .mode-label input { cursor: pointer; }
 
+#ghost-toggle {
+  text-align: center;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+}
+
 /* ===== FILE DE COMMANDES (mode différé) ===== */
 #queue-panel {
   background: rgba(255,255,255,0.05);
