@@ -68,6 +68,13 @@
           </label>
         </div>
 
+        <div id="ghost-toggle" style="display:none">
+          <label class="mode-label">
+            <input type="checkbox" id="ghost-checkbox" onchange="toggleGhostPreview(this.checked)">
+            👻 Afficher le déplacement virtuel sur le plateau
+          </label>
+        </div>
+
         <div id="controls-grid">
           <button class="ctrl-btn" onclick="playerAction('turnLeft')" title="Pivoter gauche">↺</button>
           <button class="ctrl-btn" onclick="playerAction('forward')" title="Avancer">⬆</button>
