@@ -56,6 +56,18 @@
 
       <!-- CONTRÔLES -->
       <div id="controls">
+
+        <div id="mode-switch">
+          <label class="mode-label">
+            <input type="radio" name="game-mode" value="direct" checked onchange="setGameMode('direct')">
+            ⚡ Mode direct
+          </label>
+          <label class="mode-label">
+            <input type="radio" name="game-mode" value="deferred" onchange="setGameMode('deferred')">
+            📝 Mode différé
+          </label>
+        </div>
+
         <div id="controls-grid">
           <button class="ctrl-btn" onclick="playerAction('turnLeft')" title="Pivoter gauche">↺</button>
           <button class="ctrl-btn" onclick="playerAction('forward')" title="Avancer">⬆</button>
@@ -65,9 +77,15 @@
           <button class="ctrl-btn empty"></button>
           <button class="ctrl-btn pickup-btn" onclick="playerAction('pickup')" title="Ramasser">📦 Ramasser</button>
         </div>
-        <button id="btn-end-turn" onclick="endTurn()">✅ Terminer mon tour</button>
+
+        <div id="queue-panel" style="display:none">
+          <h3>📝 Commandes en attente</h3>
+          <div id="queue-list"></div>
+          <button id="btn-undo-queue" onclick="undoLastCommand()" title="Effacer la dernière commande (touche Retour arrière)">⌫ Effacer la dernière</button>
+        </div>
+
+        <button id="btn-end-turn" onclick="handleEndTurnClick()">✅ Terminer mon tour</button>
       </div>
-    </div>
 
     <!-- PANNEAU DROIT : Légende -->
     <div id="panel-right">
