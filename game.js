@@ -70,13 +70,11 @@ async function joinGame() {
   const snap = await roomRef.once('value');
 
   if (!snap.exists()) {
-    // ── Créer la partie ──
     const initialState = createInitialState();
     initialState.players[myId] = createPlayer(myName, 0);
     await roomRef.set(initialState);
-    addLog(`Partie créée par ${myName}`);
+    await pushLog(`Partie créée par ${myName}`);
   } else {
-    // ── Rejoindre la partie ──
     const state = snap.val();
     if (state.status === 'finished') {
       errEl.textContent = 'Cette partie est terminée.';
@@ -85,7 +83,7 @@ async function joinGame() {
     const playerCount = Object.keys(state.players || {}).length;
     const colorIndex  = playerCount % PLAYER_COLORS.length;
     await roomRef.child('players/' + myId).set(createPlayer(myName, colorIndex));
-    addLog(`${myName} a rejoint la partie`);
+    await pushLog(`${myName} a rejoint la partie`);
   }
 
   // Afficher l'écran de jeu
