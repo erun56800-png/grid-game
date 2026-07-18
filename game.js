@@ -1,25 +1,25 @@
 // ============================================================
 //  CONFIGURATION FIREBASE  ← REMPLACEZ PAR VOS VALEURS
 // ============================================================
+
 const firebaseConfig = {
-
   apiKey: "AIzaSyBeXzev-66h0PDkAB4jfI0zQD_f68iPhWU",
-
   authDomain: "grid-game-e511e.firebaseapp.com",
-
   databaseURL: "https://grid-game-e511e-default-rtdb.europe-west1.firebasedatabase.app",
-
   projectId: "grid-game-e511e",
-
   storageBucket: "grid-game-e511e.firebasestorage.app",
-
   messagingSenderId: "777360639613",
-
   appId: "1:777360639613:web:4108144b6ec0571e059314"
-
 };
-
-
+const firebaseConfig = {
+  apiKey: "VOTRE_API_KEY",
+  authDomain: "VOTRE_PROJECT.firebaseapp.com",
+  databaseURL: "https://VOTRE_PROJECT-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "VOTRE_PROJECT",
+  storageBucket: "VOTRE_PROJECT.appspot.com",
+  messagingSenderId: "VOTRE_SENDER_ID",
+  appId: "VOTRE_APP_ID"
+};
 
 // ============================================================
 //  CONSTANTES DU JEU
@@ -36,6 +36,15 @@ const DIR_ARROWS     = { N:'▲', E:'▶', S:'▼', W:'◀' };
 const PLAYER_COLORS  = ['#4CAF50','#2196F3','#FF5722','#9C27B0',
                          '#00BCD4','#FF9800','#E91E63','#8BC34A'];
 
+// Libellés affichés dans la file de commandes (mode différé)
+const ACTION_LABELS = {
+  forward:   '⬆ Avancer',
+  backward:  '⬇ Reculer',
+  turnLeft:  '↺ Pivoter gauche',
+  turnRight: '↻ Pivoter droite',
+  pickup:    '📦 Ramasser'
+};
+
 // ============================================================
 //  ÉTAT LOCAL
 // ============================================================
@@ -46,6 +55,11 @@ let roomCode   = '';
 let gameState  = null;   // copie locale du state Firebase
 let isMyTurn   = false;
 let canvas, ctx;
+
+// ── Mode différé ──
+let gameMode         = 'direct';  // 'direct' | 'deferred'
+let commandQueue      = [];        // actions en attente (mode différé)
+let previewOverride   = null;      // aperçu local {x,y,direction,objects}
 
 // ============================================================
 //  INITIALISATION FIREBASE
@@ -177,8 +191,20 @@ function onStateUpdate(snap) {
 
   // Déterminer si c'est mon tour
   isMyTurn = (gameState.currentPlayer === myId && gameState.status === 'playing');
+
+  // Si ce n'est plus mon tour, on vide la file de commandes en attente
+  if (!isMyTurn) {
+    commandQueue = [];
+    previewOverride = null;
+  }
+
   updateUI();
   drawGrid();
+
+  // Réappliquer l'aperçu local si on est en mode différé avec des commandes en attente
+  if (isMyTurn && gameMode === 'deferred' && commandQueue.length > 0) {
+    renderDeferredPreview();
+  }
 
   // Vérifier la victoire
   if (gameState.status === 'finished') showWinner();
@@ -214,10 +240,21 @@ async function startGame(playerIds) {
 }
 
 // ============================================================
-//  ACTIONS DU JOUEUR
+//  DISPATCH : mode direct ou mode différé
 // ============================================================
-async function playerAction(action) {
+function playerAction(action) {
   if (!isMyTurn) return;
+  if (gameMode === 'deferred') {
+    playerActionDeferred(action);
+  } else {
+    playerActionDirect(action);
+  }
+}
+
+// ============================================================
+//  MODE DIRECT (comportement d'origine) — envoi immédiat à Firebase
+// ============================================================
+async function playerActionDirect(action) {
   const player = gameState.players[myId];
   if (!player) return;
 
@@ -300,11 +337,218 @@ async function playerAction(action) {
 }
 
 // ============================================================
-//  FIN DE TOUR
+//  SIMULATION PURE (utilisée par le mode différé)
+//  Ne touche jamais Firebase : calcule juste un état hypothétique
+// ============================================================
+function simulateQueue(basePlayer, baseObjects, queue) {
+  const state = {
+    x: basePlayer.x,
+    y: basePlayer.y,
+    direction: basePlayer.direction,
+    movesLeft: basePlayer.movesLeft || 0,
+    score: basePlayer.score || 0
+  };
+  const objects = { ...(baseObjects || {}) };
+  const pickedKeys = [];
+
+  queue.forEach(action => {
+    switch (action) {
+      case 'forward': {
+        const [dx, dy] = DIR_VECTORS[state.direction];
+        state.x = clamp(state.x + dx, 0, GRID_SIZE - 1);
+        state.y = clamp(state.y + dy, 0, GRID_SIZE - 1);
+        state.movesLeft--;
+        break;
+      }
+      case 'backward': {
+        const [dx, dy] = DIR_VECTORS[state.direction];
+        state.x = clamp(state.x - dx, 0, GRID_SIZE - 1);
+        state.y = clamp(state.y - dy, 0, GRID_SIZE - 1);
+        state.movesLeft--;
+        break;
+      }
+      case 'turnRight': {
+        const idx = DIRECTIONS.indexOf(state.direction);
+        state.direction = DIRECTIONS[(idx + 1) % 4];
+        state.movesLeft--;
+        break;
+      }
+      case 'turnLeft': {
+        const idx = DIRECTIONS.indexOf(state.direction);
+        state.direction = DIRECTIONS[(idx + 3) % 4];
+        state.movesLeft--;
+        break;
+      }
+      case 'pickup': {
+        const key = `${state.x}_${state.y}`;
+        if (objects[key]) {
+          delete objects[key];
+          state.score++;
+          pickedKeys.push(key);
+        }
+        break;
+      }
+    }
+  });
+
+  return { state, objects, pickedKeys };
+}
+
+// ============================================================
+//  MODE DIFFÉRÉ : ajouter une commande à la file
+// ============================================================
+function playerActionDeferred(action) {
+  const player = gameState.players[myId];
+  if (!player) return;
+
+  // État simulé avant l'action qu'on souhaite ajouter
+  const before = simulateQueue(player, gameState.objects, commandQueue);
+
+  if (action !== 'pickup' && before.state.movesLeft <= 0) {
+    addLocalLog('❌ Plus de déplacements disponibles !');
+    return;
+  }
+  if (action === 'pickup') {
+    const key = `${before.state.x}_${before.state.y}`;
+    if (!before.objects[key]) {
+      addLocalLog('❌ Pas d\'objet ici (selon la position prévue) !');
+      return;
+    }
+  }
+
+  commandQueue.push(action);
+  renderDeferredPreview();
+}
+
+// ============================================================
+//  MODE DIFFÉRÉ : effacer la dernière commande
+// ============================================================
+function undoLastCommand() {
+  if (!isMyTurn || gameMode !== 'deferred') return;
+  if (commandQueue.length === 0) return;
+  commandQueue.pop();
+  renderDeferredPreview();
+}
+
+// ============================================================
+//  MODE DIFFÉRÉ : rafraîchir l'aperçu local (canvas + compteurs)
+// ============================================================
+function renderDeferredPreview() {
+  const player = gameState.players[myId];
+  if (!player) return;
+
+  const { state, objects } = simulateQueue(player, gameState.objects, commandQueue);
+
+  previewOverride = {
+    x: state.x,
+    y: state.y,
+    direction: state.direction,
+    objects: objects
+  };
+
+  document.getElementById('moves-left').textContent = Math.max(0, state.movesLeft);
+  document.getElementById('my-score').textContent    = state.score;
+
+  updateQueueList();
+  drawGrid();
+}
+
+// ============================================================
+//  MODE DIFFÉRÉ : afficher la file de commandes à l'écran
+// ============================================================
+function updateQueueList() {
+  const list = document.getElementById('queue-list');
+  if (!list) return;
+  list.innerHTML = commandQueue.map(a =>
+    `<span class="queue-entry${a === 'pickup' ? ' queue-pickup' : ''}">${ACTION_LABELS[a] || a}</span>`
+  ).join('');
+}
+
+// ============================================================
+//  BASCULER ENTRE MODE DIRECT ET MODE DIFFÉRÉ
+// ============================================================
+function setGameMode(mode) {
+  if (commandQueue.length > 0) {
+    addLocalLog('⚠️ File de commandes vidée suite au changement de mode.');
+  }
+  gameMode = mode;
+  commandQueue = [];
+  previewOverride = null;
+
+  const queuePanel = document.getElementById('queue-panel');
+  if (queuePanel) {
+    queuePanel.style.display = (mode === 'deferred') ? 'block' : 'none';
+  }
+
+  updateUI();
+  drawGrid();
+}
+
+// ============================================================
+//  DISPATCH FIN DE TOUR
+// ============================================================
+function handleEndTurnClick() {
+  if (gameMode === 'deferred') {
+    endTurnDeferred();
+  } else {
+    endTurn();
+  }
+}
+
+// ============================================================
+//  FIN DE TOUR — MODE DIRECT (comportement d'origine)
 // ============================================================
 async function endTurn() {
   if (!isMyTurn) return;
+  await advanceTurn(gameState.objects);
+}
 
+// ============================================================
+//  FIN DE TOUR — MODE DIFFÉRÉ
+//  Exécute toute la file de commandes d'un coup, puis passe la main
+// ============================================================
+async function endTurnDeferred() {
+  if (!isMyTurn) return;
+  const player = gameState.players[myId];
+  if (!player) return;
+
+  const { state: finalState, objects: objectsAfterPickup, pickedKeys } =
+    simulateQueue(player, gameState.objects, commandQueue);
+
+  const playerUpdates = {
+    [`players/${myId}/x`]:         finalState.x,
+    [`players/${myId}/y`]:         finalState.y,
+    [`players/${myId}/direction`]: finalState.direction,
+    [`players/${myId}/score`]:     finalState.score,
+    [`players/${myId}/movesLeft`]: Math.max(0, finalState.movesLeft)
+  };
+  pickedKeys.forEach(key => { playerUpdates[`objects/${key}`] = null; });
+
+  await roomRef.update(playerUpdates);
+
+  if (commandQueue.length > 0) {
+    await pushLog(`📝 ${player.name} exécute ${commandQueue.length} commande(s) (mode différé)`);
+  }
+  if (pickedKeys.length > 0) {
+    await pushLog(`⭐ ${player.name} ramasse ${pickedKeys.length} objet(s) ! Score : ${finalState.score}`);
+  }
+
+  commandQueue = [];
+  previewOverride = null;
+
+  // Vérifier la victoire
+  if (finalState.score >= WIN_SCORE) {
+    await roomRef.update({ status: 'finished', winner: myId });
+    return;
+  }
+
+  await advanceTurn(objectsAfterPickup);
+}
+
+// ============================================================
+//  PASSER LA MAIN AU JOUEUR SUIVANT (partagé par les 2 modes)
+// ============================================================
+async function advanceTurn(objectsSnapshot) {
   const state       = gameState;
   const playerOrder = state.playerOrder || Object.keys(state.players);
   const currentIdx  = playerOrder.indexOf(myId);
@@ -312,11 +556,9 @@ async function endTurn() {
   const nextId      = playerOrder[nextIdx];
 
   // Calculer les objets ramassés ce tour (différence)
-  // On régénère autant d'objets que ramassés pendant ce tour
-  // (simplification : on compte les objets manquants vs INIT_OBJECTS)
-  const currentObjects = Object.keys(state.objects || {}).length;
-  const missing        = INIT_OBJECTS - currentObjects;
-  let newObjects       = { ...state.objects };
+  const currentObjectsCount = Object.keys(objectsSnapshot || {}).length;
+  const missing             = INIT_OBJECTS - currentObjectsCount;
+  let newObjects            = { ...objectsSnapshot };
   if (missing > 0) {
     newObjects = generateObjects(missing, newObjects);
   }
@@ -366,8 +608,8 @@ function drawGrid() {
     ctx.stroke();
   }
 
-  // Objets
-  const objects = gameState.objects || {};
+  // Objets (aperçu local en mode différé si des commandes sont en file)
+  const objects = (previewOverride && previewOverride.objects) ? previewOverride.objects : (gameState.objects || {});
   Object.values(objects).forEach(obj => {
     const cx = obj.x * CELL_SIZE + CELL_SIZE / 2;
     const cy = obj.y * CELL_SIZE + CELL_SIZE / 2;
@@ -385,8 +627,14 @@ function drawGrid() {
   const players = gameState.players || {};
   Object.entries(players).forEach(([id, p]) => {
     const isMe = (id === myId);
-    const cx   = p.x * CELL_SIZE + CELL_SIZE / 2;
-    const cy   = p.y * CELL_SIZE + CELL_SIZE / 2;
+
+    // En mode différé, on affiche la position prévue pour soi-même
+    const displayX   = (isMe && previewOverride) ? previewOverride.x : p.x;
+    const displayY   = (isMe && previewOverride) ? previewOverride.y : p.y;
+    const displayDir = (isMe && previewOverride) ? previewOverride.direction : p.direction;
+
+    const cx   = displayX * CELL_SIZE + CELL_SIZE / 2;
+    const cy   = displayY * CELL_SIZE + CELL_SIZE / 2;
     const color = PLAYER_COLORS[p.colorIndex % PLAYER_COLORS.length];
 
     // Halo si c'est le joueur actif
@@ -403,13 +651,17 @@ function drawGrid() {
     ctx.arc(cx, cy, CELL_SIZE * 0.32, 0, Math.PI * 2);
     ctx.fill();
 
-    // Bordure (moi = épaisse)
+    // Bordure (moi = épaisse, pointillée si aperçu = prévisionnel)
     ctx.strokeStyle = isMe ? '#fff' : '#000';
     ctx.lineWidth   = isMe ? 2.5 : 1;
+    if (isMe && previewOverride && commandQueue.length > 0) {
+      ctx.setLineDash([4, 3]);
+    }
     ctx.stroke();
+    ctx.setLineDash([]);
 
     // Flèche de direction
-    drawDirectionArrow(ctx, cx, cy, p.direction, color);
+    drawDirectionArrow(ctx, cx, cy, displayDir, color);
 
     // Initiale du joueur
     ctx.fillStyle    = '#fff';
@@ -553,3 +805,13 @@ function addLocalLog(msg) {
   div.textContent = msg;
   logList.prepend(div);
 }
+
+// ============================================================
+//  RACCOURCI CLAVIER : Retour arrière / Suppr = effacer la dernière commande
+// ============================================================
+window.addEventListener('keydown', (e) => {
+  if (gameMode === 'deferred' && isMyTurn && (e.key === 'Backspace' || e.key === 'Delete')) {
+    e.preventDefault();
+    undoLastCommand();
+  }
+});
