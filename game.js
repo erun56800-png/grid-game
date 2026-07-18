@@ -1,7 +1,6 @@
 // ============================================================
 //  CONFIGURATION FIREBASE  ← REMPLACEZ PAR VOS VALEURS
 // ============================================================
-
 const firebaseConfig = {
   apiKey: "AIzaSyBeXzev-66h0PDkAB4jfI0zQD_f68iPhWU",
   authDomain: "grid-game-e511e.firebaseapp.com",
@@ -51,6 +50,7 @@ let canvas, ctx;
 let gameMode         = 'direct';  // 'direct' | 'deferred'
 let commandQueue      = [];        // actions en attente (mode différé)
 let previewOverride   = null;      // aperçu local {x,y,direction,objects}
+let showGhostPreview  = false;     // affichage du pion fantôme sur le plateau (désactivé par défaut)
 
 // ============================================================
 //  INITIALISATION FIREBASE
@@ -466,12 +466,30 @@ function setGameMode(mode) {
   commandQueue = [];
   previewOverride = null;
 
+  // Le déplacement virtuel est toujours désactivé par défaut
+  // lors d'un changement de mode
+  showGhostPreview = false;
+  const ghostCheckbox = document.getElementById('ghost-checkbox');
+  if (ghostCheckbox) ghostCheckbox.checked = false;
+
   const queuePanel = document.getElementById('queue-panel');
   if (queuePanel) {
     queuePanel.style.display = (mode === 'deferred') ? 'block' : 'none';
   }
+  const ghostToggle = document.getElementById('ghost-toggle');
+  if (ghostToggle) {
+    ghostToggle.style.display = (mode === 'deferred') ? 'block' : 'none';
+  }
 
   updateUI();
+  drawGrid();
+}
+
+// ============================================================
+//  ACTIVER / DÉSACTIVER L'AFFICHAGE DU PION FANTÔME
+// ============================================================
+function toggleGhostPreview(checked) {
+  showGhostPreview = checked;
   drawGrid();
 }
 
@@ -599,8 +617,9 @@ function drawGrid() {
     ctx.stroke();
   }
 
-  // Objets (aperçu local en mode différé si des commandes sont en file)
-  const objects = (previewOverride && previewOverride.objects) ? previewOverride.objects : (gameState.objects || {});
+// Objets (aperçu local en mode différé, seulement si le pion fantôme est activé)
+  const objects = (previewOverride && showGhostPreview && previewOverride.objects) ? previewOverride.objects : (gameState.objects || {});
+  
   Object.values(objects).forEach(obj => {
     const cx = obj.x * CELL_SIZE + CELL_SIZE / 2;
     const cy = obj.y * CELL_SIZE + CELL_SIZE / 2;
@@ -619,10 +638,12 @@ function drawGrid() {
   Object.entries(players).forEach(([id, p]) => {
     const isMe = (id === myId);
 
-    // En mode différé, on affiche la position prévue pour soi-même
-    const displayX   = (isMe && previewOverride) ? previewOverride.x : p.x;
-    const displayY   = (isMe && previewOverride) ? previewOverride.y : p.y;
-    const displayDir = (isMe && previewOverride) ? previewOverride.direction : p.direction;
+   // En mode différé, on affiche la position prévue pour soi-même
+    // uniquement si le pion fantôme est activé (désactivé par défaut)
+    const useGhost   = isMe && previewOverride && showGhostPreview;
+    const displayX   = useGhost ? previewOverride.x : p.x;
+    const displayY   = useGhost ? previewOverride.y : p.y;
+    const displayDir = useGhost ? previewOverride.direction : p.direction;
 
     const cx   = displayX * CELL_SIZE + CELL_SIZE / 2;
     const cy   = displayY * CELL_SIZE + CELL_SIZE / 2;
@@ -645,7 +666,8 @@ function drawGrid() {
     // Bordure (moi = épaisse, pointillée si aperçu = prévisionnel)
     ctx.strokeStyle = isMe ? '#fff' : '#000';
     ctx.lineWidth   = isMe ? 2.5 : 1;
-    if (isMe && previewOverride && commandQueue.length > 0) {
+	
+	if (useGhost && commandQueue.length > 0) {
       ctx.setLineDash([4, 3]);
     }
     ctx.stroke();
