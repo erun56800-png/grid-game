@@ -170,7 +170,7 @@ function onStateUpdate(snap) {
 
   // Si la partie est en attente et qu'il y a au moins 2 joueurs → démarrer
   const playerIds = Object.keys(gameState.players);
-  if (gameState.status === 'waiting' && playerIds.length >= 1) {
+  if (gameState.status === 'waiting' && playerIds.length >= 2) {
     // Le premier joueur connecté démarre la partie
     if (isFirstPlayer()) startGame(playerIds);
   }
