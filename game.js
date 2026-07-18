@@ -11,15 +11,6 @@ const firebaseConfig = {
   messagingSenderId: "777360639613",
   appId: "1:777360639613:web:4108144b6ec0571e059314"
 };
-const firebaseConfig = {
-  apiKey: "VOTRE_API_KEY",
-  authDomain: "VOTRE_PROJECT.firebaseapp.com",
-  databaseURL: "https://VOTRE_PROJECT-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "VOTRE_PROJECT",
-  storageBucket: "VOTRE_PROJECT.appspot.com",
-  messagingSenderId: "VOTRE_SENDER_ID",
-  appId: "VOTRE_APP_ID"
-};
 
 // ============================================================
 //  CONSTANTES DU JEU
