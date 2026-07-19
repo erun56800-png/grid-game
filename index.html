@@ -15,118 +15,208 @@
       <p>Collectez 20 objets pour gagner !</p>
       <input type="text" id="player-name" placeholder="Votre pseudo" maxlength="12">
       <input type="text" id="room-code" placeholder="Code de partie (ex: ROOM1)" maxlength="8">
-      <button id="btn-join" onclick="joinGame()">Rejoindre / Créer une partie</button>
+      <button id="btn-join" onclick="proceedFromLogin()">Rejoindre / Créer une partie</button>
+
+      <div id="host-settings" style="display:none">
+        <h3>Paramètres de la nouvelle salle</h3>
+        <div class="settings-row">
+          <label><input type="radio" name="movement-mode" value="relative" checked> Mode relatif (↺ ⬆ ↻ ⬇)</label>
+        </div>
+        <div class="settings-row">
+          <label><input type="radio" name="movement-mode" value="absolute"> Mode absolu (N S E O)</label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="lock-mode-checkbox"> 🔒 Verrouiller ce mode pour les autres joueurs</label>
+        </div>
+        <div class="settings-row">
+          <label>Nombre de joueurs attendus :
+            <input type="number" id="expected-players" min="1" max="8" value="2">
+          </label>
+        </div>
+        <button id="btn-create-room" onclick="createRoomWithSettings()">✅ Créer la salle</button>
+      </div>
+
       <div id="login-error" class="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- ÉCRAN SALLE D'ATTENTE -->
+  <div id="screen-lobby" class="screen">
+    <div class="login-box lobby-box">
+      <h1>🕓 Salle d'attente</h1>
+      <p>Code de la salle : <strong id="lobby-room-code"></strong></p>
+
+      <div class="settings-row invite-row">
+        <input type="text" id="lobby-invite-link" readonly>
+        <button onclick="copyInviteLink()">🔗 Copier</button>
+      </div>
+      <div id="invite-link-feedback"></div>
+
+      <p id="lobby-player-count"></p>
+      <ul id="lobby-player-list"></ul>
+
+      <div id="lobby-host-controls" style="display:none">
+        <button id="btn-launch-game" onclick="launchGameFromLobby()">▶ Démarrer la partie</button>
+        <p class="hint-text">Vous pouvez démarrer dès qu'un ou plusieurs joueurs ont rejoint (y compris seul).</p>
+      </div>
+      <div id="lobby-wait-msg" style="display:none">
+        <div class="spinner"></div>
+        <p>En attente que l'hôte démarre la partie...</p>
+      </div>
     </div>
   </div>
 
   <!-- ÉCRAN DE JEU -->
   <div id="screen-game" class="screen">
 
-    <!-- PANNEAU GAUCHE : Infos -->
-    <div id="panel-left">
-      <div id="room-info">
-        <h2>Partie : <span id="display-room"></span></h2>
-        <p>Joueur : <span id="display-player"></span></p>
+    <!-- BARRE DES JOUEURS -->
+    <div id="players-bar"></div>
+
+    <!-- BANNIÈRE "C'EST VOTRE TOUR" -->
+    <div id="turn-alert-banner">🎮 C'est votre tour !</div>
+
+    <div id="game-body">
+
+      <!-- PANNEAU GAUCHE : Infos -->
+      <div id="panel-left">
+        <div id="room-info">
+          <h2>Partie : <span id="display-room"></span></h2>
+          <p>Joueur : <span id="display-player"></span></p>
+          <div id="movement-mode-display">
+            <label>🧭
+              <select id="movement-mode-select" onchange="changeMovementMode(this.value)">
+                <option value="relative">Relatif (↺➡↻)</option>
+                <option value="absolute">Absolu (N S E O)</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div id="scores-panel">
+          <h3>📊 Scores</h3>
+          <div id="scores-list"></div>
+        </div>
+
+        <div id="turn-info">
+          <h3>⏱ Tour actuel</h3>
+          <p>Joueur actif : <span id="current-player-name">-</span></p>
+          <p>Déplacements restants : <span id="moves-left">-</span></p>
+          <p>Objets collectés : <span id="my-score">0</span> / 20</p>
+        </div>
+
+        <div id="log-panel">
+          <h3>📜 Journal <button id="btn-toggle-log" onclick="toggleLog()">Afficher</button></h3>
+          <div id="log-list" style="display:none"></div>
+        </div>
       </div>
 
-      <div id="scores-panel">
-        <h3>📊 Scores</h3>
-        <div id="scores-list"></div>
+      <!-- PANNEAU CENTRE : Plateau -->
+      <div id="panel-center">
+
+        <div id="center-row">
+          <div id="canvas-col">
+            <div id="grid-container">
+              <canvas id="game-canvas" width="500" height="500"></canvas>
+            </div>
+          </div>
+
+          <div id="side-col">
+            <div id="mode-switch">
+              <label class="mode-label">
+                <input type="radio" name="game-mode" value="direct" checked onchange="setGameMode('direct')">
+                ⚡ Mode direct
+              </label>
+              <label class="mode-label">
+                <input type="radio" name="game-mode" value="deferred" onchange="setGameMode('deferred')">
+                📝 Mode différé
+              </label>
+            </div>
+
+            <div id="ghost-toggle" style="display:none">
+              <label class="mode-label">
+                <input type="checkbox" id="ghost-checkbox" onchange="toggleGhostPreview(this.checked)">
+                👻 Afficher le déplacement virtuel
+              </label>
+            </div>
+
+            <div id="queue-panel" style="display:none">
+              <h3>📝 Commandes en attente</h3>
+              <div id="queue-list"></div>
+              <button id="btn-undo-queue" onclick="undoLastCommand()" title="Effacer la dernière commande (touche Retour arrière)">⌫ Effacer la dernière</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- CONTRÔLES -->
+        <div id="controls">
+          <div id="controls-grid-relative" class="pad pad-2row">
+            <button class="ctrl-btn" onclick="playerAction('turnLeft')" title="Pivoter gauche">↺</button>
+            <button class="ctrl-btn" onclick="playerAction('forward')" title="Avancer">⬆</button>
+            <button class="ctrl-btn" onclick="playerAction('turnRight')" title="Pivoter droite">↻</button>
+            <button class="ctrl-btn empty"></button>
+            <button class="ctrl-btn" onclick="playerAction('backward')" title="Reculer">⬇</button>
+            <button class="ctrl-btn empty"></button>
+          </div>
+
+          <div id="controls-grid-absolute" class="pad pad-3row" style="display:none">
+            <button class="ctrl-btn empty"></button>
+            <button class="ctrl-btn" onclick="playerAction('moveN')" title="Nord">⬆ N</button>
+            <button class="ctrl-btn empty"></button>
+            <button class="ctrl-btn" onclick="playerAction('moveW')" title="Ouest">⬅ O</button>
+            <button class="ctrl-btn empty"></button>
+            <button class="ctrl-btn" onclick="playerAction('moveE')" title="Est">➡ E</button>
+            <button class="ctrl-btn empty"></button>
+            <button class="ctrl-btn" onclick="playerAction('moveS')" title="Sud">⬇ S</button>
+            <button class="ctrl-btn empty"></button>
+          </div>
+
+          <div id="action-row">
+            <button class="pickup-btn" onclick="playerAction('pickup')" title="Ramasser">📦 Ramasser</button>
+            <button id="btn-end-turn" onclick="handleEndTurnClick()">✅ Terminer mon tour</button>
+          </div>
+        </div>
       </div>
 
-      <div id="turn-info">
-        <h3>⏱ Tour actuel</h3>
-        <p>Joueur actif : <span id="current-player-name">-</span></p>
-        <p>Déplacements restants : <span id="moves-left">-</span></p>
-        <p>Objets collectés : <span id="my-score">0</span> / 20</p>
+      <!-- PANNEAU DROIT : Légende -->
+      <div id="panel-right">
+        <h3>🗺 Légende</h3>
+        <div class="legend-item"><span class="legend-color" style="background:#4CAF50"></span> Vous</div>
+        <div class="legend-item"><span class="legend-color" style="background:#2196F3"></span> Autres joueurs</div>
+        <div class="legend-item"><span class="legend-color" style="background:#FF9800"></span> Objet ⭐</div>
+        <div class="legend-item"><span class="legend-color" style="background:#333"></span> Case vide</div>
+
+        <h3 style="margin-top:20px">📋 Règles</h3>
+        <ul id="rules-list">
+          <li>⬆ Avancer d'une case</li>
+          <li>⬇ Reculer d'une case</li>
+          <li>↺↻ Pivoter 90° (mode relatif)</li>
+          <li>N S E O : déplacement absolu</li>
+          <li>📦 Ramasser un objet</li>
+          <li>1-10 déplacements/tour</li>
+          <li>Les inutilisés s'accumulent</li>
+          <li>🏆 Premier à 20 objets gagne !</li>
+        </ul>
+
+        <div id="waiting-msg" style="display:none">
+          <div class="spinner"></div>
+          <p>En attente des autres joueurs...</p>
+        </div>
       </div>
 
-      <div id="log-panel">
-        <h3>📜 Journal</h3>
-        <div id="log-list"></div>
-      </div>
     </div>
-
-    <!-- PANNEAU CENTRE : Plateau -->
-    <div id="panel-center">
-      <div id="grid-container">
-        <canvas id="game-canvas" width="500" height="500"></canvas>
-      </div>
-
-      <!-- CONTRÔLES -->
-      <div id="controls">
-
-        <div id="mode-switch">
-          <label class="mode-label">
-            <input type="radio" name="game-mode" value="direct" checked onchange="setGameMode('direct')">
-            ⚡ Mode direct
-          </label>
-          <label class="mode-label">
-            <input type="radio" name="game-mode" value="deferred" onchange="setGameMode('deferred')">
-            📝 Mode différé
-          </label>
-        </div>
-
-        <div id="ghost-toggle" style="display:none">
-          <label class="mode-label">
-            <input type="checkbox" id="ghost-checkbox" onchange="toggleGhostPreview(this.checked)">
-            👻 Afficher le déplacement virtuel sur le plateau
-          </label>
-        </div>
-
-        <div id="controls-grid">
-          <button class="ctrl-btn" onclick="playerAction('turnLeft')" title="Pivoter gauche">↺</button>
-          <button class="ctrl-btn" onclick="playerAction('forward')" title="Avancer">⬆</button>
-          <button class="ctrl-btn" onclick="playerAction('turnRight')" title="Pivoter droite">↻</button>
-          <button class="ctrl-btn empty"></button>
-          <button class="ctrl-btn" onclick="playerAction('backward')" title="Reculer">⬇</button>
-          <button class="ctrl-btn empty"></button>
-          <button class="ctrl-btn pickup-btn" onclick="playerAction('pickup')" title="Ramasser">📦 Ramasser</button>
-        </div>
-
-        <div id="queue-panel" style="display:none">
-          <h3>📝 Commandes en attente</h3>
-          <div id="queue-list"></div>
-          <button id="btn-undo-queue" onclick="undoLastCommand()" title="Effacer la dernière commande (touche Retour arrière)">⌫ Effacer la dernière</button>
-        </div>
-
-        <button id="btn-end-turn" onclick="handleEndTurnClick()">✅ Terminer mon tour</button>
-      </div>
-
-    <!-- PANNEAU DROIT : Légende -->
-    <div id="panel-right">
-      <h3>🗺 Légende</h3>
-      <div class="legend-item"><span class="legend-color" style="background:#4CAF50"></span> Vous</div>
-      <div class="legend-item"><span class="legend-color" style="background:#2196F3"></span> Autres joueurs</div>
-      <div class="legend-item"><span class="legend-color" style="background:#FF9800"></span> Objet ⭐</div>
-      <div class="legend-item"><span class="legend-color" style="background:#333"></span> Case vide</div>
-
-      <h3 style="margin-top:20px">📋 Règles</h3>
-      <ul id="rules-list">
-        <li>⬆ Avancer d'une case</li>
-        <li>⬇ Reculer d'une case</li>
-        <li>↺↻ Pivoter 90°</li>
-        <li>📦 Ramasser un objet</li>
-        <li>1-10 déplacements/tour</li>
-        <li>Les inutilisés s'accumulent</li>
-        <li>🏆 Premier à 20 objets gagne !</li>
-      </ul>
-
-      <div id="waiting-msg" style="display:none">
-        <div class="spinner"></div>
-        <p>En attente des autres joueurs...</p>
-      </div>
-    </div>
-
   </div>
 
-  <!-- MODAL VICTOIRE -->
+  <!-- MODAL FIN DE PARTIE -->
   <div id="modal-win" class="modal" style="display:none">
     <div class="modal-content">
-      <h1>🏆 Victoire !</h1>
+      <h1>🏆 Fin de partie</h1>
       <p id="win-message"></p>
-      <button onclick="location.reload()">Nouvelle partie</button>
+      <div id="modal-history"></div>
+      <p id="modal-countdown"></p>
+      <div id="modal-vote-buttons"></div>
+      <div id="modal-ended-actions" style="display:none">
+        <button onclick="location.reload()">Nouvelle partie</button>
+      </div>
     </div>
   </div>
 
