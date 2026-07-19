@@ -12,19 +12,6 @@ const firebaseConfig = {
 };
 
 // ============================================================
-//  CONFIGURATION FIREBASE  ← REMPLACEZ PAR VOS VALEURS
-// ============================================================
-const firebaseConfig = {
-  apiKey: "VOTRE_API_KEY",
-  authDomain: "VOTRE_PROJECT.firebaseapp.com",
-  databaseURL: "https://VOTRE_PROJECT-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "VOTRE_PROJECT",
-  storageBucket: "VOTRE_PROJECT.appspot.com",
-  messagingSenderId: "VOTRE_SENDER_ID",
-  appId: "VOTRE_APP_ID"
-};
-
-// ============================================================
 //  CONSTANTES DU JEU
 // ============================================================
 const GRID_SIZE        = 10;   // 10×10 cases
