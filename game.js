@@ -20,7 +20,7 @@ const DEFAULT_WIN_SCORE     = 20;
 const DEFAULT_INIT_OBJECTS = 15;
 const DEFAULT_MIN_MOVES    = 1;
 const DEFAULT_MAX_MOVES    = 10;
-const TRAP_COUNT       = 10;   // nombre de cases pièges
+const DEFAULT_TRAP_COUNT = 10;   // nombre de cases pièges par défaut
 const DIRECTIONS       = ['N', 'E', 'S', 'W'];
 const DIR_VECTORS      = { N:[0,-1], E:[1,0], S:[0,1], W:[-1,0] };
 const REMATCH_DELAY_MS = 15000; // durée de vote pour la revanche
@@ -171,6 +171,8 @@ async function createRoomWithSettings() {
   const winScore         = Math.max(1, parseInt(document.getElementById('win-score-input').value) || DEFAULT_WIN_SCORE);
   const initObjects      = Math.max(1, parseInt(document.getElementById('init-objects-input').value) || DEFAULT_INIT_OBJECTS);
   const turnTimeLimit    = Math.max(0, parseInt(document.getElementById('turn-time-limit').value) || 0);
+  const trapsEnabled     = document.getElementById('traps-enabled-checkbox').checked;
+  const trapCount        = Math.max(0, parseInt(document.getElementById('trap-count-input').value) || 0);
 
   const errEl = document.getElementById('login-error');
   const candidateId = playerIdFor(myName);
@@ -181,7 +183,8 @@ async function createRoomWithSettings() {
   const settings = {
     movementMode, modeLocked, hostId: myId, expectedPlayers,
     gameModePolicy, ghostAllowed,
-    minMoves, maxMoves, winScore, initObjects, turnTimeLimit
+    minMoves, maxMoves, winScore, initObjects, turnTimeLimit,
+    trapsEnabled, trapCount
   };
 
   const initialState = createInitialState(settings);
@@ -272,7 +275,9 @@ async function copyPersonalLink() {
 // ============================================================
 function createInitialState(settings) {
   const objects = generateObjects(settings.initObjects || DEFAULT_INIT_OBJECTS, {});
-  const traps   = generateTraps(TRAP_COUNT, objects);
+  const traps   = settings.trapsEnabled
+    ? generateTraps(settings.trapCount != null ? settings.trapCount : DEFAULT_TRAP_COUNT, objects)
+    : {};
   return {
     status:        'waiting',   // waiting | playing | finished | ended
     turn:          0,
@@ -1106,7 +1111,9 @@ async function startNewRound() {
 
   const gameNumber = (gameState.gameNumber || 1) + 1;
   const newObjects = generateObjects(currentInitObjects(), {});
-  const newTraps   = generateTraps(TRAP_COUNT, newObjects);
+  const trapsEnabled = getSetting('trapsEnabled', false);
+  const trapCount     = getSetting('trapCount', DEFAULT_TRAP_COUNT);
+  const newTraps    = trapsEnabled ? generateTraps(trapCount, newObjects) : {};
 
   const updates = {
     status:        'playing',
