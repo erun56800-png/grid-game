@@ -2,13 +2,13 @@
 //  CONFIGURATION FIREBASE  ← REMPLACEZ PAR VOS VALEURS
 // ============================================================
 const firebaseConfig = {
-  apiKey: "VOTRE_API_KEY",
-  authDomain: "VOTRE_PROJECT.firebaseapp.com",
-  databaseURL: "https://VOTRE_PROJECT-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "VOTRE_PROJECT",
-  storageBucket: "VOTRE_PROJECT.appspot.com",
-  messagingSenderId: "VOTRE_SENDER_ID",
-  appId: "VOTRE_APP_ID"
+  apiKey: "AIzaSyBeXzev-66h0PDkAB4jfI0zQD_f68iPhWU",
+  authDomain: "grid-game-e511e.firebaseapp.com",
+  databaseURL: "https://grid-game-e511e-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "grid-game-e511e",
+  storageBucket: "grid-game-e511e.firebasestorage.app",
+  messagingSenderId: "777360639613",
+  appId: "1:777360639613:web:4108144b6ec0571e059314"
 };
 
 // ============================================================
@@ -1051,10 +1051,7 @@ function renderFinishedModalContent() {
 
     const elapsed   = Date.now() - (gameState.finishedAt || Date.now());
     const remaining = Math.max(0, Math.ceil((REMATCH_DELAY_MS - elapsed) / 1000));
-    const totalPlayers = Object.keys(gameState.players || {}).length;
-    const threshold = Math.min(2, totalPlayers);
-    const thresholdTxt = threshold <= 1 ? 'vous votez "Oui"' : `${threshold} joueurs ou plus votent "Oui"`;
-    countdownEl.textContent = `Nouvelle partie possible encore ${remaining}s si ${thresholdTxt}.`;
+    countdownEl.textContent = `Nouvelle partie possible encore ${remaining}s si 2 joueurs ou plus votent "Oui".`;
     countdownEl.style.display = 'block';
 
     const myVote = gameState.rematchVotes ? gameState.rematchVotes[myId] : undefined;
@@ -1084,10 +1081,7 @@ async function castRematchVote(vote) {
 async function resolveRematch() {
   const votes = gameState.rematchVotes || {};
   const yesCount = Object.values(votes).filter(v => v === true).length;
-  const totalPlayers = Object.keys(gameState.players || {}).length;
-  const threshold = Math.min(2, totalPlayers); // 1 joueur seul → 1 "oui" suffit
-
-  if (yesCount >= threshold) {
+  if (yesCount >= 2) {
     await startNewRound();
   } else {
     await roomRef.update({ status: 'ended' });
