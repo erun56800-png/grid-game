@@ -16,8 +16,11 @@ const firebaseConfig = {
 // ============================================================
 const GRID_SIZE        = 10;   // 10×10 cases
 const CELL_SIZE        = 50;   // pixels par case
-const WIN_SCORE         = 20;   // objets pour gagner
-const INIT_OBJECTS     = 15;   // objets au démarrage
+const DEFAULT_WIN_SCORE     = 20;
+const DEFAULT_INIT_OBJECTS = 15;
+const DEFAULT_MIN_MOVES    = 1;
+const DEFAULT_MAX_MOVES    = 10;
+const TRAP_COUNT       = 10;   // nombre de cases pièges
 const DIRECTIONS       = ['N', 'E', 'S', 'W'];
 const DIR_VECTORS      = { N:[0,-1], E:[1,0], S:[0,1], W:[-1,0] };
 const REMATCH_DELAY_MS = 15000; // durée de vote pour la revanche
@@ -26,17 +29,28 @@ const REMATCH_DELAY_MS = 15000; // durée de vote pour la revanche
 const PLAYER_COLORS  = ['#4CAF50','#2196F3','#FF5722','#9C27B0',
                          '#00BCD4','#FF9800','#E91E63','#8BC34A'];
 
-// Libellés affichés dans la file de commandes (mode différé)
-const ACTION_LABELS = {
-  forward:   '⬆ Avancer',
-  backward:  '⬇ Reculer',
-  turnLeft:  '↺ Pivoter gauche',
-  turnRight: '↻ Pivoter droite',
-  pickup:    '📦 Ramasser',
-  moveN:     '⬆ Nord',
-  moveE:     '➡ Est',
-  moveS:     '⬇ Sud',
-  moveW:     '⬅ Ouest'
+// Icônes + libellés (info-bulle) pour la file de commandes
+const ACTION_ICONS = {
+  forward:   '⬆',
+  backward:  '⬇',
+  turnLeft:  '↺',
+  turnRight: '↻',
+  pickup:    '📦',
+  moveN:     '⬆',
+  moveE:     '➡',
+  moveS:     '⬇',
+  moveW:     '⬅'
+};
+const ACTION_TITLES = {
+  forward:   'Avancer',
+  backward:  'Reculer',
+  turnLeft:  'Pivoter à gauche',
+  turnRight: 'Pivoter à droite',
+  pickup:    'Ramasser',
+  moveN:     'Nord',
+  moveE:     'Est',
+  moveS:     'Sud',
+  moveW:     'Ouest'
 };
 
 // Correspondance action absolue → direction
@@ -70,26 +84,45 @@ let flashTimeoutId = null;
 let rematchIntervalId   = null;
 let rematchScheduledFor = null;
 
+// ── Minuteur de tour ──
+let turnTimerInterval = null;
+let turnTimerDeadline = null;
+let lastBeepSecond    = null;
+
 // ============================================================
 //  INITIALISATION FIREBASE
 // ============================================================
 firebase.initializeApp(firebaseConfig);
 db = firebase.database();
 
-// Pré-remplir le code de salle si présent dans l'URL (?room=XXXX)
+// Pré-remplir le code de salle et/ou le pseudo depuis l'URL (?room=XXXX&name=YYY)
 window.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
   const roomParam = params.get('room');
-  if (roomParam) {
-    document.getElementById('room-code').value = roomParam.toUpperCase();
-  }
+  const nameParam  = params.get('name');
+  if (roomParam) document.getElementById('room-code').value = roomParam.toUpperCase();
+  if (nameParam)  document.getElementById('player-name').value = nameParam;
 });
 
 // ============================================================
-//  UTILITAIRE : identifiant unique de joueur
+//  UTILITAIRES : identifiant stable de joueur
 // ============================================================
-function generateId() {
-  return 'player_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+function slugifyName(name) {
+  return name.toString().trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'joueur';
+}
+function playerIdFor(name) {
+  return 'player_' + slugifyName(name);
+}
+
+// ============================================================
+//  RÉGLAGES AVANCÉS (écran de connexion)
+// ============================================================
+function toggleAdvancedSettings() {
+  const el = document.getElementById('advanced-settings');
+  el.style.display = (el.style.display === 'none') ? 'block' : 'none';
 }
 
 // ============================================================
@@ -109,13 +142,19 @@ async function proceedFromLogin() {
 
   if (snap.exists()) {
     const state = snap.val();
-    if (state.status !== 'waiting') {
-      errEl.textContent = 'Cette partie a déjà commencé ou est terminée.';
+    const candidateId = playerIdFor(myName);
+    const existingPlayer = (state.players || {})[candidateId];
+
+    if (existingPlayer && existingPlayer.online === true) {
+      errEl.textContent = "Ce joueur est déjà dans la salle (fermez l'autre onglet ou choisissez un autre pseudo).";
       return;
     }
-    await joinExistingRoom(state);
+    if (state.status !== 'waiting' && !existingPlayer) {
+      errEl.textContent = 'Cette partie a déjà commencé. Seuls les joueurs déjà inscrits peuvent la rejoindre.';
+      return;
+    }
+    await joinExistingRoom(state, candidateId, existingPlayer);
   } else {
-    // Nouvelle salle : afficher les réglages hôte avant de créer
     document.getElementById('host-settings').style.display = 'block';
     document.getElementById('btn-join').style.display = 'none';
   }
@@ -123,36 +162,66 @@ async function proceedFromLogin() {
 
 async function createRoomWithSettings() {
   const movementMode    = document.querySelector('input[name="movement-mode"]:checked').value;
-  const modeLocked      = document.getElementById('lock-mode-checkbox').checked;
-  const expectedPlayers = Math.max(1, parseInt(document.getElementById('expected-players').value) || 2);
+  const modeLocked       = document.getElementById('lock-mode-checkbox').checked;
+  const expectedPlayers  = Math.max(1, parseInt(document.getElementById('expected-players').value) || 2);
+  const gameModePolicy   = document.getElementById('game-mode-policy').value;
+  const ghostAllowed     = document.getElementById('ghost-allowed-checkbox').checked;
+  const minMoves         = Math.max(1, parseInt(document.getElementById('min-moves').value) || DEFAULT_MIN_MOVES);
+  const maxMoves         = Math.max(minMoves, parseInt(document.getElementById('max-moves').value) || DEFAULT_MAX_MOVES);
+  const winScore         = Math.max(1, parseInt(document.getElementById('win-score-input').value) || DEFAULT_WIN_SCORE);
+  const initObjects      = Math.max(1, parseInt(document.getElementById('init-objects-input').value) || DEFAULT_INIT_OBJECTS);
+  const turnTimeLimit    = Math.max(0, parseInt(document.getElementById('turn-time-limit').value) || 0);
 
-  myId    = generateId();
+  const errEl = document.getElementById('login-error');
+  const candidateId = playerIdFor(myName);
+
+  myId    = candidateId;
   roomRef = db.ref('rooms/' + roomCode);
 
-  const initialState = createInitialState({
-    movementMode,
-    modeLocked,
-    hostId: myId,
-    expectedPlayers
-  });
+  const settings = {
+    movementMode, modeLocked, hostId: myId, expectedPlayers,
+    gameModePolicy, ghostAllowed,
+    minMoves, maxMoves, winScore, initObjects, turnTimeLimit
+  };
+
+  const initialState = createInitialState(settings);
   initialState.players[myId] = createPlayer(myName, 0);
 
   await roomRef.set(initialState);
   await pushLog(`Partie créée par ${myName}`);
 
+  setupPresence();
   enterGameScreen();
 }
 
-async function joinExistingRoom(state) {
-  myId    = generateId();
+async function joinExistingRoom(state, candidateId, existingPlayer) {
+  myId    = candidateId;
   roomRef = db.ref('rooms/' + roomCode);
 
-  const playerCount = Object.keys(state.players || {}).length;
-  const colorIndex  = playerCount % PLAYER_COLORS.length;
-  await roomRef.child('players/' + myId).set(createPlayer(myName, colorIndex));
-  await pushLog(`${myName} a rejoint la partie`);
+  if (existingPlayer) {
+    // Reconnexion : le joueur retrouve son score et sa position
+    await roomRef.child('players/' + myId + '/online').set(true);
+    await pushLog(`${myName} s'est reconnecté à la partie`);
+  } else {
+    const playerCount = Object.keys(state.players || {}).length;
+    const colorIndex  = playerCount % PLAYER_COLORS.length;
+    await roomRef.child('players/' + myId).set(createPlayer(myName, colorIndex));
+    await pushLog(`${myName} a rejoint la partie`);
+  }
 
+  setupPresence();
   enterGameScreen();
+}
+
+function setupPresence() {
+  const myOnlineRef = roomRef.child('players/' + myId + '/online');
+  const connectedRef = db.ref('.info/connected');
+  connectedRef.on('value', (snap) => {
+    if (snap.val() === true) {
+      myOnlineRef.onDisconnect().set(false);
+      myOnlineRef.set(true);
+    }
+  });
 }
 
 function enterGameScreen() {
@@ -164,17 +233,46 @@ function enterGameScreen() {
   ctx    = canvas.getContext('2d');
 
   roomRef.on('value', onStateUpdate);
+}
 
-  window.addEventListener('beforeunload', () => {
-    roomRef.child('players/' + myId).remove();
-  });
+// ============================================================
+//  LIENS D'INVITATION
+// ============================================================
+function getInviteLink() {
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('room', roomCode);
+  return url.toString();
+}
+function getPersonalLink() {
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('room', roomCode);
+  url.searchParams.set('name', myName);
+  return url.toString();
+}
+async function copyInviteLink() {
+  const feedback = document.getElementById('invite-link-feedback');
+  try {
+    await navigator.clipboard.writeText(getInviteLink());
+    if (feedback) { feedback.textContent = '✅ Lien copié !'; setTimeout(() => feedback.textContent = '', 2500); }
+  } catch (e) { window.prompt('Copiez ce lien :', getInviteLink()); }
+}
+async function copyPersonalLink() {
+  const feedback = document.getElementById('invite-link-feedback');
+  try {
+    await navigator.clipboard.writeText(getPersonalLink());
+    if (feedback) { feedback.textContent = '✅ Lien personnel copié !'; setTimeout(() => feedback.textContent = '', 2500); }
+    else { addLocalLog('🔗 Lien personnel copié !'); }
+  } catch (e) { window.prompt('Copiez ce lien :', getPersonalLink()); }
 }
 
 // ============================================================
 //  CRÉATION D'ÉTAT INITIAL
 // ============================================================
 function createInitialState(settings) {
-  const objects = generateObjects(INIT_OBJECTS, {});
+  const objects = generateObjects(settings.initObjects || DEFAULT_INIT_OBJECTS, {});
+  const traps   = generateTraps(TRAP_COUNT, objects);
   return {
     status:        'waiting',   // waiting | playing | finished | ended
     turn:          0,
@@ -182,6 +280,7 @@ function createInitialState(settings) {
     playerOrder:   [],
     players:       {},
     objects:       objects,
+    traps:         traps,
     log:           {},
     settings:      settings,
     gameNumber:    1,
@@ -199,12 +298,13 @@ function createPlayer(name, colorIndex) {
     direction:  DIRECTIONS[Math.floor(Math.random() * 4)],
     score:      0,
     movesLeft:  0,
+    movesUsed:  0,
     online:     true
   };
 }
 
 // ============================================================
-//  GÉNÉRATION D'OBJETS
+//  GÉNÉRATION D'OBJETS ET DE PIÈGES
 // ============================================================
 function generateObjects(count, existingObjects) {
   const objects = { ...existingObjects };
@@ -223,6 +323,41 @@ function generateObjects(count, existingObjects) {
   return objects;
 }
 
+function generateTraps(count, avoidObjects) {
+  const traps = {};
+  const avoid = avoidObjects || {};
+  let placed = 0;
+  let attempts = 0;
+  while (placed < count && attempts < 500) {
+    attempts++;
+    const x = Math.floor(Math.random() * GRID_SIZE);
+    const y = Math.floor(Math.random() * GRID_SIZE);
+    const key = `${x}_${y}`;
+    if (!avoid[key] && !traps[key]) {
+      traps[key] = true;
+      placed++;
+    }
+  }
+  return traps;
+}
+
+// ============================================================
+//  RÉGLAGES DYNAMIQUES DE LA SALLE
+// ============================================================
+function getSetting(key, fallback) {
+  return (gameState && gameState.settings && gameState.settings[key] !== undefined)
+    ? gameState.settings[key] : fallback;
+}
+function currentWinScore()    { return getSetting('winScore', DEFAULT_WIN_SCORE); }
+function currentInitObjects() { return getSetting('initObjects', DEFAULT_INIT_OBJECTS); }
+
+function randomMoves() {
+  const min = getSetting('minMoves', DEFAULT_MIN_MOVES);
+  const max = getSetting('maxMoves', DEFAULT_MAX_MOVES);
+  const lo = Math.min(min, max), hi = Math.max(min, max);
+  return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+}
+
 // ============================================================
 //  MISE À JOUR DE L'ÉTAT (listener Firebase)
 // ============================================================
@@ -233,6 +368,7 @@ function onStateUpdate(snap) {
   // Garantir les structures
   if (!gameState.players)      gameState.players      = {};
   if (!gameState.objects)      gameState.objects      = {};
+  if (!gameState.traps)        gameState.traps        = {};
   if (!gameState.log)          gameState.log          = {};
   if (!gameState.settings)     gameState.settings     = { movementMode: 'relative', modeLocked: false, hostId: null, expectedPlayers: 2 };
   if (!gameState.rematchVotes) gameState.rematchVotes = {};
@@ -251,6 +387,7 @@ function onStateUpdate(snap) {
   if (!isMyTurn) {
     commandQueue = [];
     previewOverride = null;
+    stopTurnTimer();
   }
 
   updateUI();
@@ -263,6 +400,7 @@ function onStateUpdate(snap) {
   if (!wasMyTurn && isMyTurn) {
     playTurnSound();
     flashTurnAlert();
+    startTurnTimer();
   }
 
   if (gameState.status === 'finished' || gameState.status === 'ended') {
@@ -289,10 +427,14 @@ function renderLobby() {
   document.getElementById('lobby-room-code').textContent = roomCode;
   const linkInput = document.getElementById('lobby-invite-link');
   if (linkInput) linkInput.value = getInviteLink();
+  const personalInput = document.getElementById('lobby-personal-link');
+  if (personalInput) personalInput.value = getPersonalLink();
 
   const players = gameState.players || {};
   const list = document.getElementById('lobby-player-list');
-  list.innerHTML = Object.values(players).map(p => `<li>${p.name}</li>`).join('');
+  list.innerHTML = Object.values(players).map(p =>
+    `<li class="${p.online === false ? 'offline-item' : ''}">${p.name}${p.online === false ? ' (hors ligne)' : ''}</li>`
+  ).join('');
 
   const expected = (gameState.settings && gameState.settings.expectedPlayers) || 2;
   document.getElementById('lobby-player-count').textContent =
@@ -309,27 +451,6 @@ function renderLobby() {
   }
 }
 
-function getInviteLink() {
-  const url = new URL(location.href);
-  url.search = '';
-  url.searchParams.set('room', roomCode);
-  return url.toString();
-}
-
-async function copyInviteLink() {
-  const link = getInviteLink();
-  const feedback = document.getElementById('invite-link-feedback');
-  try {
-    await navigator.clipboard.writeText(link);
-    if (feedback) {
-      feedback.textContent = '✅ Lien copié !';
-      setTimeout(() => { feedback.textContent = ''; }, 2500);
-    }
-  } catch (e) {
-    window.prompt('Copiez ce lien :', link);
-  }
-}
-
 async function launchGameFromLobby() {
   const ids = Object.keys(gameState.players || {});
   if (ids.length === 0) return;
@@ -342,7 +463,8 @@ async function launchGameFromLobby() {
     status:        'playing',
     turn:          1,
     currentPlayer: firstId,
-    playerOrder:   shuffled
+    playerOrder:   shuffled,
+    turnStartedAt: Date.now()
   };
   updates[`players/${firstId}/movesLeft`] = movesForFirst;
 
@@ -379,6 +501,41 @@ function updateControlPad() {
 }
 
 // ============================================================
+//  POLITIQUE DE MODE DIRECT/DIFFÉRÉ + FANTÔME (verrouillage hôte)
+// ============================================================
+function setGameModeLocal(mode) {
+  gameMode = mode;
+  const queuePanel = document.getElementById('queue-panel');
+  if (queuePanel) queuePanel.style.display = (mode === 'deferred') ? 'block' : 'none';
+}
+
+function applyGameModePolicy() {
+  const policy = (gameState.settings && gameState.settings.gameModePolicy) || 'free';
+  const modeSwitch = document.getElementById('mode-switch');
+
+  if (policy === 'forceDirect') {
+    if (gameMode !== 'direct') setGameModeLocal('direct');
+    if (modeSwitch) modeSwitch.style.display = 'none';
+  } else if (policy === 'forceDeferred') {
+    if (gameMode !== 'deferred') setGameModeLocal('deferred');
+    if (modeSwitch) modeSwitch.style.display = 'none';
+  } else {
+    if (modeSwitch) modeSwitch.style.display = 'flex';
+  }
+
+  const ghostAllowed = gameState.settings ? gameState.settings.ghostAllowed !== false : true;
+  const ghostToggle = document.getElementById('ghost-toggle');
+  if (!ghostAllowed) {
+    showGhostPreview = false;
+    const cb = document.getElementById('ghost-checkbox');
+    if (cb) cb.checked = false;
+    if (ghostToggle) ghostToggle.style.display = 'none';
+  } else if (ghostToggle) {
+    ghostToggle.style.display = (gameMode === 'deferred') ? 'block' : 'none';
+  }
+}
+
+// ============================================================
 //  DISPATCH : mode direct ou mode différé
 // ============================================================
 function playerAction(action) {
@@ -407,6 +564,8 @@ function describeAction(action, name, newDir) {
   }
 }
 
+const MOVE_ACTIONS = new Set(['forward', 'backward', 'moveN', 'moveE', 'moveS', 'moveW']);
+
 // ============================================================
 //  MODE DIRECT — envoi immédiat à Firebase
 // ============================================================
@@ -424,7 +583,7 @@ async function playerActionDirect(action) {
       await roomRef.update(updates);
       await pushLog(`⭐ ${player.name} ramasse un objet ! Score : ${newScore}`);
 
-      if (newScore >= WIN_SCORE) {
+      if (newScore >= currentWinScore()) {
         await finishGame(myId);
       }
     } else {
@@ -438,68 +597,98 @@ async function playerActionDirect(action) {
     return;
   }
 
-  const { state } = simulateQueue(player, gameState.objects, [action]);
-  const logMsg = describeAction(action, player.name, state.direction);
+  const { state } = simulateQueue(player, gameState.objects, [action], gameState.traps);
+
+  const logMsg = state.trapped
+    ? `💥 ${player.name} tombe dans un piège et reste bloqué ! Fin de son tour.`
+    : describeAction(action, player.name, state.direction);
 
   await roomRef.update({
     [`players/${myId}/x`]:         state.x,
     [`players/${myId}/y`]:         state.y,
     [`players/${myId}/direction`]: state.direction,
-    [`players/${myId}/movesLeft`]: state.movesLeft
+    [`players/${myId}/movesLeft`]: state.movesLeft,
+    [`players/${myId}/movesUsed`]: (player.movesUsed || 0) + 1
   });
   if (logMsg) await pushLog(logMsg);
+
+  if (state.trapped) {
+    await advanceTurn(gameState.objects);
+  }
 }
 
 // ============================================================
 //  SIMULATION PURE (utilisée par le mode différé et le mode direct)
-//  Ne touche jamais Firebase : calcule un état hypothétique
+//  Ne touche jamais Firebase : calcule un état hypothétique.
+//  Gère les pièges : le joueur revient sur sa case précédente,
+//  perd ses déplacements restants, et le reste de la file est ignoré.
 // ============================================================
-function simulateQueue(basePlayer, baseObjects, queue) {
+function simulateQueue(basePlayer, baseObjects, queue, traps) {
   const state = {
     x: basePlayer.x,
     y: basePlayer.y,
     direction: basePlayer.direction,
     movesLeft: basePlayer.movesLeft || 0,
-    score: basePlayer.score || 0
+    score: basePlayer.score || 0,
+    trapped: false
   };
   const objects = { ...(baseObjects || {}) };
+  const trapMap = traps || {};
   const pickedKeys = [];
+  let movesUsed = 0;
 
-  queue.forEach(action => {
+  for (const action of queue) {
+    if (state.trapped) break;
+
     if (ABS_DIR[action]) {
       const dir = ABS_DIR[action];
       const [dx, dy] = DIR_VECTORS[dir];
-      state.x = clamp(state.x + dx, 0, GRID_SIZE - 1);
-      state.y = clamp(state.y + dy, 0, GRID_SIZE - 1);
-      state.direction = dir;
+      const newX = clamp(state.x + dx, 0, GRID_SIZE - 1);
+      const newY = clamp(state.y + dy, 0, GRID_SIZE - 1);
       state.movesLeft--;
-      return;
+      movesUsed++;
+      if (trapMap[`${newX}_${newY}`]) {
+        state.trapped = true;
+        state.movesLeft = 0;
+      } else {
+        state.x = newX; state.y = newY; state.direction = dir;
+      }
+      continue;
     }
+
     switch (action) {
       case 'forward': {
         const [dx, dy] = DIR_VECTORS[state.direction];
-        state.x = clamp(state.x + dx, 0, GRID_SIZE - 1);
-        state.y = clamp(state.y + dy, 0, GRID_SIZE - 1);
+        const newX = clamp(state.x + dx, 0, GRID_SIZE - 1);
+        const newY = clamp(state.y + dy, 0, GRID_SIZE - 1);
         state.movesLeft--;
+        movesUsed++;
+        if (trapMap[`${newX}_${newY}`]) { state.trapped = true; state.movesLeft = 0; }
+        else { state.x = newX; state.y = newY; }
         break;
       }
       case 'backward': {
         const [dx, dy] = DIR_VECTORS[state.direction];
-        state.x = clamp(state.x - dx, 0, GRID_SIZE - 1);
-        state.y = clamp(state.y - dy, 0, GRID_SIZE - 1);
+        const newX = clamp(state.x - dx, 0, GRID_SIZE - 1);
+        const newY = clamp(state.y - dy, 0, GRID_SIZE - 1);
         state.movesLeft--;
+        movesUsed++;
+        if (trapMap[`${newX}_${newY}`]) { state.trapped = true; state.movesLeft = 0; }
+        else { state.x = newX; state.y = newY; }
         break;
       }
       case 'turnRight': {
         const idx = DIRECTIONS.indexOf(state.direction);
         state.direction = DIRECTIONS[(idx + 1) % 4];
         state.movesLeft--;
+        movesUsed++;
         break;
       }
       case 'turnLeft': {
         const idx = DIRECTIONS.indexOf(state.direction);
         state.direction = DIRECTIONS[(idx + 3) % 4];
         state.movesLeft--;
+        movesUsed++;
         break;
       }
       case 'pickup': {
@@ -512,9 +701,9 @@ function simulateQueue(basePlayer, baseObjects, queue) {
         break;
       }
     }
-  });
+  }
 
-  return { state, objects, pickedKeys };
+  return { state, objects, pickedKeys, movesUsed };
 }
 
 // ============================================================
@@ -524,8 +713,12 @@ function playerActionDeferred(action) {
   const player = gameState.players[myId];
   if (!player) return;
 
-  const before = simulateQueue(player, gameState.objects, commandQueue);
+  const before = simulateQueue(player, gameState.objects, commandQueue, gameState.traps);
 
+  if (before.state.trapped) {
+    addLocalLog('❌ Votre tour est déjà terminé (piège) — cliquez sur "Terminer mon tour".');
+    return;
+  }
   if (action !== 'pickup' && before.state.movesLeft <= 0) {
     addLocalLog('❌ Plus de déplacements disponibles !');
     return;
@@ -559,7 +752,7 @@ function renderDeferredPreview() {
   const player = gameState.players[myId];
   if (!player) return;
 
-  const { state, objects } = simulateQueue(player, gameState.objects, commandQueue);
+  const { state, objects } = simulateQueue(player, gameState.objects, commandQueue, gameState.traps);
 
   previewOverride = {
     x: state.x,
@@ -578,19 +771,23 @@ function renderDeferredPreview() {
 function updateQueueList() {
   const list = document.getElementById('queue-list');
   if (!list) return;
-  list.innerHTML = commandQueue.map(a =>
-    `<span class="queue-entry${a === 'pickup' ? ' queue-pickup' : ''}">${ACTION_LABELS[a] || a}</span>`
-  ).join('');
+  list.innerHTML = commandQueue.map(a => {
+    const cls = a === 'pickup' ? ' queue-pickup' : '';
+    return `<span class="queue-entry${cls}" title="${ACTION_TITLES[a] || a}">${ACTION_ICONS[a] || a}</span>`;
+  }).join('');
 }
 
 // ============================================================
 //  BASCULER ENTRE MODE DIRECT ET MODE DIFFÉRÉ (préférence locale)
 // ============================================================
 function setGameMode(mode) {
+  const policy = (gameState.settings && gameState.settings.gameModePolicy) || 'free';
+  if (policy !== 'free') return; // verrouillé par l'hôte
+
   if (commandQueue.length > 0) {
     addLocalLog('⚠️ File de commandes vidée suite au changement de mode.');
   }
-  gameMode = mode;
+  setGameModeLocal(mode);
   commandQueue = [];
   previewOverride = null;
   showGhostPreview = false;
@@ -598,11 +795,9 @@ function setGameMode(mode) {
   const ghostCheckbox = document.getElementById('ghost-checkbox');
   if (ghostCheckbox) ghostCheckbox.checked = false;
 
-  const queuePanel = document.getElementById('queue-panel');
-  if (queuePanel) queuePanel.style.display = (mode === 'deferred') ? 'block' : 'none';
-
+  const ghostAllowed = gameState.settings ? gameState.settings.ghostAllowed !== false : true;
   const ghostToggle = document.getElementById('ghost-toggle');
-  if (ghostToggle) ghostToggle.style.display = (mode === 'deferred') ? 'block' : 'none';
+  if (ghostToggle) ghostToggle.style.display = (mode === 'deferred' && ghostAllowed) ? 'block' : 'none';
 
   updateUI();
   drawGrid();
@@ -641,21 +836,24 @@ async function endTurnDeferred() {
   const player = gameState.players[myId];
   if (!player) return;
 
-  const { state: finalState, objects: objectsAfterPickup, pickedKeys } =
-    simulateQueue(player, gameState.objects, commandQueue);
+  const { state: finalState, objects: objectsAfterPickup, pickedKeys, movesUsed } =
+    simulateQueue(player, gameState.objects, commandQueue, gameState.traps);
 
   const playerUpdates = {
     [`players/${myId}/x`]:         finalState.x,
     [`players/${myId}/y`]:         finalState.y,
     [`players/${myId}/direction`]: finalState.direction,
     [`players/${myId}/score`]:     finalState.score,
-    [`players/${myId}/movesLeft`]: Math.max(0, finalState.movesLeft)
+    [`players/${myId}/movesLeft`]: Math.max(0, finalState.movesLeft),
+    [`players/${myId}/movesUsed`]: (player.movesUsed || 0) + movesUsed
   };
   pickedKeys.forEach(key => { playerUpdates[`objects/${key}`] = null; });
 
   await roomRef.update(playerUpdates);
 
-  if (commandQueue.length > 0) {
+  if (finalState.trapped) {
+    await pushLog(`💥 ${player.name} tombe dans un piège pendant l'exécution de son tour ! Déplacements restants annulés.`);
+  } else if (commandQueue.length > 0) {
     await pushLog(`📝 ${player.name} exécute ${commandQueue.length} commande(s) (mode différé)`);
   }
   if (pickedKeys.length > 0) {
@@ -665,7 +863,7 @@ async function endTurnDeferred() {
   commandQueue = [];
   previewOverride = null;
 
-  if (finalState.score >= WIN_SCORE) {
+  if (finalState.score >= currentWinScore()) {
     await finishGame(myId);
     return;
   }
@@ -684,7 +882,7 @@ async function advanceTurn(objectsSnapshot) {
   const nextId      = playerOrder[nextIdx];
 
   const currentObjectsCount = Object.keys(objectsSnapshot || {}).length;
-  const missing             = INIT_OBJECTS - currentObjectsCount;
+  const missing             = currentInitObjects() - currentObjectsCount;
   let newObjects            = { ...objectsSnapshot };
   if (missing > 0) {
     newObjects = generateObjects(missing, newObjects);
@@ -700,6 +898,7 @@ async function advanceTurn(objectsSnapshot) {
     currentPlayer:                    nextId,
     turn:                             newTurn,
     objects:                          newObjects,
+    turnStartedAt:                    Date.now(),
     [`players/${nextId}/movesLeft`]: totalMoves
   };
 
@@ -708,12 +907,64 @@ async function advanceTurn(objectsSnapshot) {
 }
 
 // ============================================================
+//  MINUTEUR DE TOUR
+// ============================================================
+function startTurnTimer() {
+  clearInterval(turnTimerInterval);
+  const limit = getSetting('turnTimeLimit', 0);
+  const timerEl = document.getElementById('turn-timer');
+  if (!limit || limit <= 0) {
+    if (timerEl) timerEl.style.display = 'none';
+    return;
+  }
+  turnTimerDeadline = (gameState.turnStartedAt || Date.now()) + limit * 1000;
+  lastBeepSecond = null;
+  if (timerEl) timerEl.style.display = 'inline-block';
+  turnTimerInterval = setInterval(tickTurnTimer, 250);
+  tickTurnTimer();
+}
+
+function tickTurnTimer() {
+  const timerEl = document.getElementById('turn-timer');
+  const remainingMs = turnTimerDeadline - Date.now();
+  const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
+  if (timerEl) timerEl.textContent = `⏱ ${remainingSec}s`;
+
+  if (remainingSec <= 10 && remainingSec > 0 && remainingSec !== lastBeepSecond) {
+    lastBeepSecond = remainingSec;
+    playTickSound();
+  }
+
+  if (remainingMs <= 0) {
+    clearInterval(turnTimerInterval);
+    turnTimerInterval = null;
+    autoSubmitTurn();
+  }
+}
+
+function stopTurnTimer() {
+  clearInterval(turnTimerInterval);
+  turnTimerInterval = null;
+  lastBeepSecond = null;
+  const timerEl = document.getElementById('turn-timer');
+  if (timerEl) timerEl.style.display = 'none';
+}
+
+function autoSubmitTurn() {
+  if (!isMyTurn) return;
+  addLocalLog('⏰ Temps écoulé, validation automatique de votre tour.');
+  handleEndTurnClick();
+}
+
+// ============================================================
 //  FIN DE PARTIE
 // ============================================================
 async function finishGame(winnerId) {
   const players = gameState.players;
   const scoresSnapshot = {};
-  Object.values(players).forEach(p => { scoresSnapshot[p.name] = p.score || 0; });
+  Object.values(players).forEach(p => {
+    scoresSnapshot[p.name] = { score: p.score || 0, movesUsed: p.movesUsed || 0 };
+  });
 
   const gameNumber = gameState.gameNumber || 1;
   const historyEntry = {
@@ -741,6 +992,7 @@ function handleGameFinished() {
   const modal = document.getElementById('modal-win');
   modal.style.display = 'flex';
   renderFinishedModalContent();
+  stopTurnTimer();
 
   if (gameState.status === 'finished') {
     clearInterval(rematchIntervalId);
@@ -808,8 +1060,12 @@ function renderFinishedModalContent() {
 
   const history = Object.values(gameState.history || {}).sort((a, b) => a.gameNumber - b.gameNumber);
   historyEl.innerHTML = history.map(h => {
-    const scoresTxt = Object.entries(h.scores).map(([n, s]) => `${n}: ${s}`).join(' · ');
-    return `<div class="history-entry">Partie ${h.gameNumber} — 🏆 ${h.winnerName} — ${scoresTxt}</div>`;
+    const scoresTxt = Object.entries(h.scores).map(([n, s]) => {
+      const score = (typeof s === 'object') ? s.score : s;
+      const moves = (typeof s === 'object') ? s.movesUsed : '?';
+      return `${n} : ${score} objet(s) en ${moves} déplacement(s)`;
+    }).join(' · ');
+    return `<div class="history-entry">Partie ${h.gameNumber} — 🏆 ${h.winnerName}<br>${scoresTxt}</div>`;
   }).join('');
 }
 
@@ -843,12 +1099,14 @@ async function startNewRound() {
       y:         Math.floor(Math.random() * GRID_SIZE),
       direction: DIRECTIONS[Math.floor(Math.random() * 4)],
       score:     0,
+      movesUsed: 0,
       movesLeft: (id === firstId) ? movesForFirst : 0
     };
   });
 
   const gameNumber = (gameState.gameNumber || 1) + 1;
-  const newObjects = generateObjects(INIT_OBJECTS, {});
+  const newObjects = generateObjects(currentInitObjects(), {});
+  const newTraps   = generateTraps(TRAP_COUNT, newObjects);
 
   const updates = {
     status:        'playing',
@@ -857,9 +1115,11 @@ async function startNewRound() {
     playerOrder:   shuffled,
     players:       resetPlayers,
     objects:       newObjects,
+    traps:         newTraps,
     winner:        null,
     rematchVotes:  {},
-    gameNumber:    gameNumber
+    gameNumber:    gameNumber,
+    turnStartedAt: Date.now()
   };
 
   await roomRef.update(updates);
@@ -893,6 +1153,18 @@ function drawGrid() {
     ctx.lineTo(W, i * CELL_SIZE);
     ctx.stroke();
   }
+
+  // Pièges
+  const traps = gameState.traps || {};
+  Object.keys(traps).forEach(key => {
+    const [tx, ty] = key.split('_').map(Number);
+    const cx = tx * CELL_SIZE + CELL_SIZE / 2;
+    const cy = ty * CELL_SIZE + CELL_SIZE / 2;
+    ctx.font = `${CELL_SIZE * 0.4}px sans-serif`;
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('❌', cx, cy);
+  });
 
   // Objets (aperçu local en mode différé, seulement si le pion fantôme est activé)
   const objects = (previewOverride && showGhostPreview && previewOverride.objects)
@@ -934,7 +1206,7 @@ function drawGrid() {
     }
 
     // Corps du joueur
-    ctx.fillStyle = color;
+    ctx.fillStyle = p.online === false ? color + '66' : color;
     ctx.beginPath();
     ctx.arc(cx, cy, CELL_SIZE * 0.32, 0, Math.PI * 2);
     ctx.fill();
@@ -1005,6 +1277,9 @@ function updateUI() {
   updatePlayersBar();
   updateControlPad();
   syncMovementModeSelect();
+  applyGameModePolicy();
+
+  document.getElementById('win-score-display').textContent = currentWinScore();
 
   // Scores (panneau gauche)
   const scoresList = document.getElementById('scores-list');
@@ -1016,8 +1291,8 @@ function updateUI() {
       div.className = 'score-entry' + (id === gameState.currentPlayer ? ' active-player' : '');
       const color = PLAYER_COLORS[p.colorIndex % PLAYER_COLORS.length];
       div.innerHTML = `
-        <span style="color:${color}">${id === myId ? '👤' : '🔵'} ${p.name}</span>
-        <span>${p.score || 0}/${WIN_SCORE}</span>
+        <span style="color:${color}">${id === myId ? '👤' : '🔵'} ${p.name}${p.online === false ? ' 💤' : ''}</span>
+        <span>${p.score || 0}/${currentWinScore()}</span>
       `;
       scoresList.appendChild(div);
     });
@@ -1046,7 +1321,7 @@ function updateUI() {
 }
 
 // ============================================================
-//  BARRE DES JOUEURS (en haut de l'écran)
+//  BARRE DES JOUEURS (en haut de l'écran, centrée)
 // ============================================================
 function updatePlayersBar() {
   const bar = document.getElementById('players-bar');
@@ -1057,12 +1332,13 @@ function updatePlayersBar() {
     const color    = PLAYER_COLORS[p.colorIndex % PLAYER_COLORS.length];
     const isActive = id === gameState.currentPlayer;
     const isMe     = id === myId;
+    const isOffline = p.online === false;
     return `
-      <div class="player-chip${isActive ? ' active-chip' : ''}${isMe ? ' me-chip' : ''}">
+      <div class="player-chip${isActive ? ' active-chip' : ''}${isMe ? ' me-chip' : ''}${isOffline ? ' offline-chip' : ''}">
         ${isActive ? '<div class="gamepad-icon">🎮</div>' : ''}
         <div class="chip-avatar" style="background:${color}">${p.name[0].toUpperCase()}</div>
         <div>
-          <div class="chip-name">${p.name}${isMe ? ' (vous)' : ''}</div>
+          <div class="chip-name">${p.name}${isMe ? ' (vous)' : ''}${isOffline ? ' 💤' : ''}</div>
           <div class="chip-stats">⭐ ${p.score || 0} · 👣 ${p.movesLeft || 0}</div>
         </div>
       </div>`;
@@ -1091,7 +1367,7 @@ function updateLog() {
 }
 
 // ============================================================
-//  SIGNAL SONORE ET VISUEL DE TOUR
+//  SIGNAUX SONORES ET VISUELS
 // ============================================================
 function playTurnSound() {
   try {
@@ -1112,6 +1388,23 @@ function playTurnSound() {
   }
 }
 
+function playTickSound() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const osc  = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.frequency.value = 1200;
+    gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.15);
+  } catch (e) { /* ignore */ }
+}
+
 function flashTurnAlert() {
   const banner = document.getElementById('turn-alert-banner');
   if (!banner) return;
@@ -1123,10 +1416,6 @@ function flashTurnAlert() {
 // ============================================================
 //  UTILITAIRES
 // ============================================================
-function randomMoves() {
-  return Math.floor(Math.random() * 10) + 1;
-}
-
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
 }

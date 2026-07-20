@@ -19,23 +19,26 @@ body {
   align-items: center;
   min-height: 100vh;
   background: linear-gradient(135deg, #1a1a2e, #16213e, #0f3460);
+  padding: 20px 0;
 }
 
 .login-box {
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 16px;
-  padding: 40px;
+  padding: 32px;
   text-align: center;
   width: 380px;
   max-width: 92vw;
   backdrop-filter: blur(10px);
+  max-height: 92vh;
+  overflow-y: auto;
 }
 
 .lobby-box { width: 420px; }
 
-.login-box h1 { font-size: 2.2rem; margin-bottom: 10px; }
-.login-box p  { color: #aaa; margin-bottom: 16px; }
+.login-box h1 { font-size: 2.1rem; margin-bottom: 10px; }
+.login-box p  { color: #aaa; margin-bottom: 14px; }
 
 .login-box input[type="text"],
 .login-box input[type="number"] {
@@ -51,34 +54,35 @@ body {
 
 .login-box button {
   width: 100%;
-  padding: 14px;
+  padding: 13px;
   background: linear-gradient(90deg, #e94560, #0f3460);
   color: white;
   border: none;
   border-radius: 8px;
-  font-size: 1rem;
+  font-size: 0.95rem;
   cursor: pointer;
   transition: opacity 0.2s;
+  margin-bottom: 8px;
 }
 .login-box button:hover { opacity: 0.85; }
 .error-msg { color: #e94560; margin-top: 12px; font-size: 0.9rem; }
 
 /* ===== RÉGLAGES HÔTE / LOBBY ===== */
 #host-settings {
-  margin-top: 16px;
+  margin-top: 14px;
   text-align: left;
   border-top: 1px solid #333;
-  padding-top: 16px;
+  padding-top: 14px;
 }
 #host-settings h3 {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   color: #aaa;
   margin-bottom: 10px;
   text-align: center;
 }
 .settings-row {
-  margin-bottom: 10px;
-  font-size: 0.88rem;
+  margin-bottom: 9px;
+  font-size: 0.85rem;
   color: #ddd;
 }
 .settings-row label {
@@ -86,11 +90,32 @@ body {
   align-items: center;
   gap: 8px;
   cursor: pointer;
+  justify-content: space-between;
 }
 .settings-row input[type="number"] {
-  width: 70px;
-  margin: 0 0 0 6px;
-  padding: 6px 8px;
+  width: 64px;
+  margin: 0;
+  padding: 5px 7px;
+}
+.settings-row select {
+  background: #222;
+  color: #fff;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 0.8rem;
+}
+#btn-toggle-advanced {
+  background: #333;
+  font-size: 0.82rem;
+  padding: 8px;
+}
+#advanced-settings {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: rgba(255,255,255,0.03);
 }
 .invite-row {
   display: flex;
@@ -100,12 +125,13 @@ body {
 .invite-row input {
   flex: 1;
   margin-bottom: 0 !important;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }
 .invite-row button {
   width: auto;
-  padding: 10px 14px;
+  padding: 10px 12px;
   white-space: nowrap;
+  margin-bottom: 0;
 }
 #invite-link-feedback {
   font-size: 0.8rem;
@@ -119,6 +145,7 @@ body {
   margin-bottom: 16px;
   max-height: 140px;
   overflow-y: auto;
+  text-align: left;
 }
 #lobby-player-list li {
   background: rgba(255,255,255,0.05);
@@ -127,11 +154,25 @@ body {
   margin-bottom: 4px;
   font-size: 0.9rem;
 }
+#lobby-player-list li.offline-item { opacity: 0.5; }
 .hint-text {
   font-size: 0.75rem;
   color: #888;
   margin-top: 8px;
 }
+
+.small-btn {
+  width: 100%;
+  padding: 6px;
+  background: #333;
+  color: #ccc;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.small-btn:hover { background: #e94560; color: #fff; }
 
 /* ===== LAYOUT JEU ===== */
 #screen-game {
@@ -147,10 +188,11 @@ body {
   min-height: 0;
 }
 
-/* ===== BARRE DES JOUEURS ===== */
+/* ===== BARRE DES JOUEURS (centrée) ===== */
 #players-bar {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
   padding: 10px 16px;
   background: #0f0f23;
@@ -172,6 +214,7 @@ body {
   background: rgba(233,69,96,0.15);
   border-color: #e94560;
 }
+.player-chip.offline-chip { opacity: 0.4; }
 .chip-avatar {
   width: 28px;
   height: 28px;
@@ -236,7 +279,6 @@ body {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  gap: 16px;
 }
 
 #panel-right {
@@ -255,6 +297,15 @@ body {
 #room-info p  { font-size: 0.85rem; color: #ccc; margin-top: 4px; }
 #turn-info p  { font-size: 0.85rem; margin: 4px 0; }
 #turn-info span { color: #4CAF50; font-weight: bold; }
+
+#turn-timer {
+  display: inline-block;
+  background: #c62828;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: bold;
+}
 
 #movement-mode-display {
   margin-top: 8px;
@@ -317,8 +368,8 @@ body {
 #canvas-col { flex: 0 0 auto; }
 #side-col {
   flex: 1;
-  min-width: 220px;
-  max-width: 260px;
+  min-width: 200px;
+  max-width: 240px;
 }
 
 /* ===== CANVAS ===== */
@@ -337,6 +388,7 @@ body {
   flex-direction: column;
   gap: 8px;
   margin-bottom: 12px;
+  margin-top: 4px;
   font-size: 0.85rem;
 }
 .mode-label {
@@ -353,7 +405,7 @@ body {
   font-size: 0.8rem;
 }
 
-/* ===== FILE DE COMMANDES (mode différé) ===== */
+/* ===== FILE DE COMMANDES (mode différé) — icônes carrées ===== */
 #queue-panel {
   background: rgba(255,255,255,0.05);
   border: 1px solid #333;
@@ -368,18 +420,24 @@ body {
 #queue-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 24px;
+  gap: 5px;
+  min-height: 28px;
   margin-bottom: 8px;
 }
 .queue-entry {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #0f3460;
   border: 1px solid #444;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 0.85rem;
+  border-radius: 5px;
+  font-size: 1rem;
+  cursor: default;
 }
 .queue-entry.queue-pickup { background: #2e7d32; }
+.queue-entry.queue-trap { background: #c62828; }
 #btn-undo-queue {
   width: 100%;
   padding: 8px;
@@ -392,27 +450,27 @@ body {
 }
 #btn-undo-queue:hover { background: #e94560; }
 
-/* ===== CONTRÔLES ===== */
-#controls { text-align: center; }
+/* ===== CONTRÔLES (réduits, au-dessus du sélecteur de mode) ===== */
+#controls { text-align: center; margin-bottom: 14px; }
 
 .pad {
   display: grid;
-  grid-template-columns: repeat(3, 60px);
-  gap: 6px;
-  margin: 0 auto 12px;
+  grid-template-columns: repeat(3, 44px);
+  gap: 5px;
+  margin: 0 auto 10px;
   width: fit-content;
 }
-.pad-2row { grid-template-rows: repeat(2, 60px); }
-.pad-3row { grid-template-rows: repeat(3, 60px); }
+.pad-2row { grid-template-rows: repeat(2, 44px); }
+.pad-3row { grid-template-rows: repeat(3, 44px); }
 
 .ctrl-btn {
-  width: 60px;
-  height: 60px;
+  width: 44px;
+  height: 44px;
   background: #0f3460;
   border: 1px solid #444;
-  border-radius: 10px;
+  border-radius: 8px;
   color: white;
-  font-size: 1.3rem;
+  font-size: 1rem;
   cursor: pointer;
   transition: background 0.15s, transform 0.1s;
 }
@@ -422,17 +480,15 @@ body {
 
 #action-row {
   display: flex;
-  gap: 10px;
-  max-width: 340px;
-  margin: 0 auto;
+  gap: 8px;
 }
 #action-row button {
   flex: 1;
-  padding: 14px 10px;
+  padding: 11px 6px;
   border: none;
   border-radius: 8px;
   color: white;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   cursor: pointer;
   transition: opacity 0.2s;
 }
@@ -517,7 +573,7 @@ body {
   overflow-y: auto;
 }
 .history-entry {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: #bbb;
   padding: 4px 0;
   border-bottom: 1px solid #222;
@@ -541,8 +597,4 @@ body {
   #game-canvas { width: 340px; height: 340px; }
   #center-row { flex-direction: column; align-items: center; }
   #side-col { max-width: 340px; width: 100%; }
-  .pad { grid-template-columns: repeat(3, 50px); }
-  .pad-2row { grid-template-rows: repeat(2, 50px); }
-  .pad-3row { grid-template-rows: repeat(3, 50px); }
-  .ctrl-btn { width: 50px; height: 50px; font-size: 1.1rem; }
 }

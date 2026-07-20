@@ -12,13 +12,14 @@
   <div id="screen-login" class="screen active">
     <div class="login-box">
       <h1>🎮 Grid Game</h1>
-      <p>Collectez 20 objets pour gagner !</p>
+      <p>Collectez des objets pour gagner !</p>
       <input type="text" id="player-name" placeholder="Votre pseudo" maxlength="12">
       <input type="text" id="room-code" placeholder="Code de partie (ex: ROOM1)" maxlength="8">
       <button id="btn-join" onclick="proceedFromLogin()">Rejoindre / Créer une partie</button>
 
       <div id="host-settings" style="display:none">
         <h3>Paramètres de la nouvelle salle</h3>
+
         <div class="settings-row">
           <label><input type="radio" name="movement-mode" value="relative" checked> Mode relatif (↺ ⬆ ↻ ⬇)</label>
         </div>
@@ -33,6 +34,29 @@
             <input type="number" id="expected-players" min="1" max="8" value="2">
           </label>
         </div>
+
+        <div class="settings-row">
+          <label>Interaction (direct / différé) :
+            <select id="game-mode-policy">
+              <option value="free">Libre pour chaque joueur</option>
+              <option value="forceDirect">Forcer le mode direct</option>
+              <option value="forceDeferred">Forcer le mode différé</option>
+            </select>
+          </label>
+        </div>
+        <div class="settings-row">
+          <label><input type="checkbox" id="ghost-allowed-checkbox" checked> Autoriser l'aperçu fantôme (mode différé)</label>
+        </div>
+
+        <button type="button" id="btn-toggle-advanced" onclick="toggleAdvancedSettings()">⚙️ Paramètres avancés</button>
+        <div id="advanced-settings" style="display:none">
+          <div class="settings-row"><label>Déplacements min / tour <input type="number" id="min-moves" value="1" min="1"></label></div>
+          <div class="settings-row"><label>Déplacements max / tour <input type="number" id="max-moves" value="10" min="1"></label></div>
+          <div class="settings-row"><label>Objets pour gagner <input type="number" id="win-score-input" value="20" min="1"></label></div>
+          <div class="settings-row"><label>Nombre d'objets sur le plateau <input type="number" id="init-objects-input" value="15" min="1"></label></div>
+          <div class="settings-row"><label>⏱ Temps limite par tour (s, 0 = illimité) <input type="number" id="turn-time-limit" value="0" min="0"></label></div>
+        </div>
+
         <button id="btn-create-room" onclick="createRoomWithSettings()">✅ Créer la salle</button>
       </div>
 
@@ -49,6 +73,10 @@
       <div class="settings-row invite-row">
         <input type="text" id="lobby-invite-link" readonly>
         <button onclick="copyInviteLink()">🔗 Copier</button>
+      </div>
+      <div class="settings-row invite-row">
+        <input type="text" id="lobby-personal-link" readonly>
+        <button onclick="copyPersonalLink()">🔗 Mon lien</button>
       </div>
       <div id="invite-link-feedback"></div>
 
@@ -82,6 +110,7 @@
         <div id="room-info">
           <h2>Partie : <span id="display-room"></span></h2>
           <p>Joueur : <span id="display-player"></span></p>
+          <button class="small-btn" onclick="copyPersonalLink()">🔗 Mon lien de reconnexion</button>
           <div id="movement-mode-display">
             <label>🧭
               <select id="movement-mode-select" onchange="changeMovementMode(this.value)">
@@ -101,7 +130,8 @@
           <h3>⏱ Tour actuel</h3>
           <p>Joueur actif : <span id="current-player-name">-</span></p>
           <p>Déplacements restants : <span id="moves-left">-</span></p>
-          <p>Objets collectés : <span id="my-score">0</span> / 20</p>
+          <p>Objets collectés : <span id="my-score">0</span> / <span id="win-score-display">20</span></p>
+          <p id="turn-timer-line"><span id="turn-timer" style="display:none"></span></p>
         </div>
 
         <div id="log-panel">
@@ -112,8 +142,8 @@
 
       <!-- PANNEAU CENTRE : Plateau -->
       <div id="panel-center">
-
         <div id="center-row">
+
           <div id="canvas-col">
             <div id="grid-container">
               <canvas id="game-canvas" width="500" height="500"></canvas>
@@ -121,6 +151,36 @@
           </div>
 
           <div id="side-col">
+
+            <!-- CONTRÔLES (au-dessus du sélecteur de mode) -->
+            <div id="controls">
+              <div id="controls-grid-relative" class="pad pad-2row">
+                <button class="ctrl-btn" onclick="playerAction('turnLeft')" title="Pivoter gauche">↺</button>
+                <button class="ctrl-btn" onclick="playerAction('forward')" title="Avancer">⬆</button>
+                <button class="ctrl-btn" onclick="playerAction('turnRight')" title="Pivoter droite">↻</button>
+                <button class="ctrl-btn empty"></button>
+                <button class="ctrl-btn" onclick="playerAction('backward')" title="Reculer">⬇</button>
+                <button class="ctrl-btn empty"></button>
+              </div>
+
+              <div id="controls-grid-absolute" class="pad pad-3row" style="display:none">
+                <button class="ctrl-btn empty"></button>
+                <button class="ctrl-btn" onclick="playerAction('moveN')" title="Nord">⬆ N</button>
+                <button class="ctrl-btn empty"></button>
+                <button class="ctrl-btn" onclick="playerAction('moveW')" title="Ouest">⬅ O</button>
+                <button class="ctrl-btn empty"></button>
+                <button class="ctrl-btn" onclick="playerAction('moveE')" title="Est">➡ E</button>
+                <button class="ctrl-btn empty"></button>
+                <button class="ctrl-btn" onclick="playerAction('moveS')" title="Sud">⬇ S</button>
+                <button class="ctrl-btn empty"></button>
+              </div>
+
+              <div id="action-row">
+                <button class="pickup-btn" onclick="playerAction('pickup')" title="Ramasser">📦 Ramasser</button>
+                <button id="btn-end-turn" onclick="handleEndTurnClick()">✅ Terminer mon tour</button>
+              </div>
+            </div>
+
             <div id="mode-switch">
               <label class="mode-label">
                 <input type="radio" name="game-mode" value="direct" checked onchange="setGameMode('direct')">
@@ -144,35 +204,7 @@
               <div id="queue-list"></div>
               <button id="btn-undo-queue" onclick="undoLastCommand()" title="Effacer la dernière commande (touche Retour arrière)">⌫ Effacer la dernière</button>
             </div>
-          </div>
-        </div>
 
-        <!-- CONTRÔLES -->
-        <div id="controls">
-          <div id="controls-grid-relative" class="pad pad-2row">
-            <button class="ctrl-btn" onclick="playerAction('turnLeft')" title="Pivoter gauche">↺</button>
-            <button class="ctrl-btn" onclick="playerAction('forward')" title="Avancer">⬆</button>
-            <button class="ctrl-btn" onclick="playerAction('turnRight')" title="Pivoter droite">↻</button>
-            <button class="ctrl-btn empty"></button>
-            <button class="ctrl-btn" onclick="playerAction('backward')" title="Reculer">⬇</button>
-            <button class="ctrl-btn empty"></button>
-          </div>
-
-          <div id="controls-grid-absolute" class="pad pad-3row" style="display:none">
-            <button class="ctrl-btn empty"></button>
-            <button class="ctrl-btn" onclick="playerAction('moveN')" title="Nord">⬆ N</button>
-            <button class="ctrl-btn empty"></button>
-            <button class="ctrl-btn" onclick="playerAction('moveW')" title="Ouest">⬅ O</button>
-            <button class="ctrl-btn empty"></button>
-            <button class="ctrl-btn" onclick="playerAction('moveE')" title="Est">➡ E</button>
-            <button class="ctrl-btn empty"></button>
-            <button class="ctrl-btn" onclick="playerAction('moveS')" title="Sud">⬇ S</button>
-            <button class="ctrl-btn empty"></button>
-          </div>
-
-          <div id="action-row">
-            <button class="pickup-btn" onclick="playerAction('pickup')" title="Ramasser">📦 Ramasser</button>
-            <button id="btn-end-turn" onclick="handleEndTurnClick()">✅ Terminer mon tour</button>
           </div>
         </div>
       </div>
@@ -183,6 +215,7 @@
         <div class="legend-item"><span class="legend-color" style="background:#4CAF50"></span> Vous</div>
         <div class="legend-item"><span class="legend-color" style="background:#2196F3"></span> Autres joueurs</div>
         <div class="legend-item"><span class="legend-color" style="background:#FF9800"></span> Objet ⭐</div>
+        <div class="legend-item"><span class="legend-color" style="background:#c62828"></span> Piège ❌</div>
         <div class="legend-item"><span class="legend-color" style="background:#333"></span> Case vide</div>
 
         <h3 style="margin-top:20px">📋 Règles</h3>
@@ -192,9 +225,9 @@
           <li>↺↻ Pivoter 90° (mode relatif)</li>
           <li>N S E O : déplacement absolu</li>
           <li>📦 Ramasser un objet</li>
-          <li>1-10 déplacements/tour</li>
-          <li>Les inutilisés s'accumulent</li>
-          <li>🏆 Premier à 20 objets gagne !</li>
+          <li>❌ Un piège vous renvoie en arrière et termine votre tour</li>
+          <li>⏱ Un temps limite peut s'appliquer par tour</li>
+          <li>🏆 Premier à atteindre l'objectif gagne !</li>
         </ul>
 
         <div id="waiting-msg" style="display:none">
