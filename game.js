@@ -79,6 +79,7 @@ let journalVisible = false;
 // ── Son / alerte de tour ──
 let audioCtx = null;
 let flashTimeoutId = null;
+let nextTurnBannerTimeout = null;
 
 // ── Revanche ──
 let rematchIntervalId   = null;
@@ -116,6 +117,12 @@ function slugifyName(name) {
 function playerIdFor(name) {
   return 'player_' + slugifyName(name);
 }
+function randomMovesFromSettings(settings) {
+  const min = (settings && settings.minMoves) || DEFAULT_MIN_MOVES;
+  const max = (settings && settings.maxMoves) || DEFAULT_MAX_MOVES;
+  const lo = Math.min(min, max), hi = Math.max(min, max);
+  return Math.floor(Math.random() * (hi - lo + 1)) + lo;
+}
 
 // ============================================================
 //  RÉGLAGES AVANCÉS (écran de connexion)
@@ -145,12 +152,12 @@ async function proceedFromLogin() {
     const candidateId = playerIdFor(myName);
     const existingPlayer = (state.players || {})[candidateId];
 
-    if (existingPlayer && existingPlayer.online === true) {
-      errEl.textContent = "Ce joueur est déjà dans la salle (fermez l'autre onglet ou choisissez un autre pseudo).";
+    if (state.status === 'ended') {
+      errEl.textContent = 'Cette salle est fermée : la partie est définitivement terminée.';
       return;
     }
-    if (state.status !== 'waiting' && !existingPlayer) {
-      errEl.textContent = 'Cette partie a déjà commencé. Seuls les joueurs déjà inscrits peuvent la rejoindre.';
+    if (existingPlayer && existingPlayer.online === true) {
+      errEl.textContent = "Ce joueur est déjà dans la salle (fermez l'autre onglet ou choisissez un autre pseudo).";
       return;
     }
     await joinExistingRoom(state, candidateId, existingPlayer);
@@ -173,6 +180,7 @@ async function createRoomWithSettings() {
   const turnTimeLimit    = Math.max(0, parseInt(document.getElementById('turn-time-limit').value) || 0);
   const trapsEnabled     = document.getElementById('traps-enabled-checkbox').checked;
   const trapCount        = Math.max(0, parseInt(document.getElementById('trap-count-input').value) || 0);
+  const preAssignMoves   = document.getElementById('preassign-moves-checkbox').checked;
 
   const errEl = document.getElementById('login-error');
   const candidateId = playerIdFor(myName);
@@ -184,7 +192,7 @@ async function createRoomWithSettings() {
     movementMode, modeLocked, hostId: myId, expectedPlayers,
     gameModePolicy, ghostAllowed,
     minMoves, maxMoves, winScore, initObjects, turnTimeLimit,
-    trapsEnabled, trapCount
+    trapsEnabled, trapCount, preAssignMoves
   };
 
   const initialState = createInitialState(settings);
@@ -208,8 +216,24 @@ async function joinExistingRoom(state, candidateId, existingPlayer) {
   } else {
     const playerCount = Object.keys(state.players || {}).length;
     const colorIndex  = playerCount % PLAYER_COLORS.length;
-    await roomRef.child('players/' + myId).set(createPlayer(myName, colorIndex));
-    await pushLog(`${myName} a rejoint la partie`);
+    const newPlayer   = createPlayer(myName, colorIndex);
+
+    if (state.status === 'playing') {
+      const preAssign = state.settings ? state.settings.preAssignMoves !== false : true;
+      if (preAssign) {
+        newPlayer.movesLeft = randomMovesFromSettings(state.settings);
+      }
+    }
+
+    await roomRef.child('players/' + myId).set(newPlayer);
+
+    if (state.status === 'playing') {
+      const newOrder = [...(state.playerOrder || []), myId];
+      await roomRef.child('playerOrder').set(newOrder);
+      await pushLog(`${myName} rejoint la partie en cours !`);
+    } else {
+      await pushLog(`${myName} a rejoint la partie`);
+    }
   }
 
   setupPresence();
@@ -255,19 +279,33 @@ function getPersonalLink() {
   return url.toString();
 }
 async function copyInviteLink() {
-  const feedback = document.getElementById('invite-link-feedback');
   try {
     await navigator.clipboard.writeText(getInviteLink());
-    if (feedback) { feedback.textContent = '✅ Lien copié !'; setTimeout(() => feedback.textContent = '', 2500); }
+    showLinkFeedback('✅ Lien copié !');
   } catch (e) { window.prompt('Copiez ce lien :', getInviteLink()); }
 }
 async function copyPersonalLink() {
-  const feedback = document.getElementById('invite-link-feedback');
   try {
     await navigator.clipboard.writeText(getPersonalLink());
-    if (feedback) { feedback.textContent = '✅ Lien personnel copié !'; setTimeout(() => feedback.textContent = '', 2500); }
-    else { addLocalLog('🔗 Lien personnel copié !'); }
+    showLinkFeedback('✅ Lien personnel copié !');
   } catch (e) { window.prompt('Copiez ce lien :', getPersonalLink()); }
+}
+
+function showLinkFeedback(msg) {
+  const lobbyScreen = document.getElementById('screen-lobby');
+  const lobbyFeedback = document.getElementById('invite-link-feedback');
+  if (lobbyFeedback && lobbyScreen && lobbyScreen.classList.contains('active')) {
+    lobbyFeedback.textContent = msg;
+    setTimeout(() => { lobbyFeedback.textContent = ''; }, 2500);
+    return;
+  }
+  const gameFeedback = document.getElementById('personal-link-feedback');
+  if (gameFeedback) {
+    gameFeedback.textContent = msg;
+    setTimeout(() => { gameFeedback.textContent = ''; }, 2500);
+    return;
+  }
+  addLocalLog(msg);
 }
 
 // ============================================================
@@ -462,7 +500,7 @@ async function launchGameFromLobby() {
 
   const shuffled = [...ids].sort(() => Math.random() - 0.5);
   const firstId  = shuffled[0];
-  const movesForFirst = randomMoves();
+  const preAssign = getSetting('preAssignMoves', true);
 
   const updates = {
     status:        'playing',
@@ -471,10 +509,18 @@ async function launchGameFromLobby() {
     playerOrder:   shuffled,
     turnStartedAt: Date.now()
   };
-  updates[`players/${firstId}/movesLeft`] = movesForFirst;
+
+  if (preAssign) {
+    shuffled.forEach(id => {
+      updates[`players/${id}/movesLeft`] = randomMoves();
+    });
+  } else {
+    updates[`players/${firstId}/movesLeft`] = randomMoves();
+  }
 
   await roomRef.update(updates);
-  await pushLog(`Tour 1 — ${gameState.players[firstId].name} joue (${movesForFirst} déplacements)`);
+  const firstMoves = updates[`players/${firstId}/movesLeft`];
+  await pushLog(`Tour 1 — ${gameState.players[firstId].name} joue (${firstMoves} déplacements)`);
 }
 
 // ============================================================
@@ -893,22 +939,44 @@ async function advanceTurn(objectsSnapshot) {
     newObjects = generateObjects(missing, newObjects);
   }
 
-  const bonusMoves    = randomMoves();
-  const nextPlayer    = state.players[nextId];
-  const currentMoves  = nextPlayer ? (nextPlayer.movesLeft || 0) : 0;
-  const totalMoves    = currentMoves + bonusMoves;
-  const newTurn       = nextIdx === 0 ? (state.turn || 1) + 1 : (state.turn || 1);
+  const newTurn   = nextIdx === 0 ? (state.turn || 1) + 1 : (state.turn || 1);
+  const preAssign = getSetting('preAssignMoves', true);
 
   const updates = {
-    currentPlayer:                    nextId,
-    turn:                             newTurn,
-    objects:                          newObjects,
-    turnStartedAt:                    Date.now(),
-    [`players/${nextId}/movesLeft`]: totalMoves
+    currentPlayer: nextId,
+    turn:          newTurn,
+    objects:       newObjects,
+    turnStartedAt: Date.now()
   };
 
+  let logMsg;
+  let announceCount = null;
+
+  if (preAssign) {
+    // Le joueur qui termine son tour reçoit dès maintenant ses déplacements
+    // pour son PROCHAIN tour (au lieu d'attendre que ce soit à nouveau son tour).
+    const myPlayer = state.players[myId];
+    const leftover = myPlayer ? (myPlayer.movesLeft || 0) : 0;
+    const bonus    = randomMoves();
+    const totalForMe = leftover + bonus;
+    updates[`players/${myId}/movesLeft`] = totalForMe;
+    announceCount = totalForMe;
+    logMsg = `🔄 Tour ${newTurn} — ${state.players[nextId].name} joue`;
+  } else {
+    const bonusMoves   = randomMoves();
+    const nextPlayer   = state.players[nextId];
+    const currentMoves = nextPlayer ? (nextPlayer.movesLeft || 0) : 0;
+    const totalMoves   = currentMoves + bonusMoves;
+    updates[`players/${nextId}/movesLeft`] = totalMoves;
+    logMsg = `🔄 Tour ${newTurn} — ${nextPlayer.name} joue (+${bonusMoves} déplacements, total: ${totalMoves})`;
+  }
+
   await roomRef.update(updates);
-  await pushLog(`🔄 Tour ${newTurn} — ${nextPlayer.name} joue (+${bonusMoves} déplacements, total: ${totalMoves})`);
+  await pushLog(logMsg);
+
+  if (announceCount !== null) {
+    announceNextMoves(announceCount);
+  }
 }
 
 // ============================================================
@@ -1051,7 +1119,10 @@ function renderFinishedModalContent() {
 
     const elapsed   = Date.now() - (gameState.finishedAt || Date.now());
     const remaining = Math.max(0, Math.ceil((REMATCH_DELAY_MS - elapsed) / 1000));
-    countdownEl.textContent = `Nouvelle partie possible encore ${remaining}s si 2 joueurs ou plus votent "Oui".`;
+    const totalPlayers = Object.keys(gameState.players || {}).length;
+    const threshold = Math.min(2, totalPlayers);
+    const thresholdTxt = threshold <= 1 ? 'vous votez "Oui"' : `${threshold} joueurs ou plus votent "Oui"`;
+    countdownEl.textContent = `Nouvelle partie possible encore ${remaining}s si ${thresholdTxt}.`;
     countdownEl.style.display = 'block';
 
     const myVote = gameState.rematchVotes ? gameState.rematchVotes[myId] : undefined;
@@ -1081,7 +1152,10 @@ async function castRematchVote(vote) {
 async function resolveRematch() {
   const votes = gameState.rematchVotes || {};
   const yesCount = Object.values(votes).filter(v => v === true).length;
-  if (yesCount >= 2) {
+  const totalPlayers = Object.keys(gameState.players || {}).length;
+  const threshold = Math.min(2, totalPlayers); // 1 joueur seul → 1 "oui" suffit
+
+  if (yesCount >= threshold) {
     await startNewRound();
   } else {
     await roomRef.update({ status: 'ended' });
@@ -1094,7 +1168,7 @@ async function startNewRound() {
 
   const shuffled = [...ids].sort(() => Math.random() - 0.5);
   const firstId  = shuffled[0];
-  const movesForFirst = randomMoves();
+  const preAssign = getSetting('preAssignMoves', true);
 
   const resetPlayers = {};
   ids.forEach(id => {
@@ -1105,7 +1179,7 @@ async function startNewRound() {
       direction: DIRECTIONS[Math.floor(Math.random() * 4)],
       score:     0,
       movesUsed: 0,
-      movesLeft: (id === firstId) ? movesForFirst : 0
+      movesLeft: preAssign ? randomMoves() : ((id === firstId) ? randomMoves() : 0)
     };
   });
 
@@ -1418,6 +1492,18 @@ function flashTurnAlert() {
   banner.classList.add('show');
   clearTimeout(flashTimeoutId);
   flashTimeoutId = setTimeout(() => banner.classList.remove('show'), 2500);
+}
+
+function announceNextMoves(count) {
+  const banner = document.getElementById('next-turn-info-banner');
+  if (!banner) {
+    addLocalLog(`ℹ️ Sauf victoire d'un autre joueur, vous disposerez de ${count} déplacements au prochain tour.`);
+    return;
+  }
+  banner.textContent = `ℹ️ Sauf victoire d'un autre joueur, vous disposerez de ${count} déplacements au prochain tour.`;
+  banner.classList.add('show');
+  clearTimeout(nextTurnBannerTimeout);
+  nextTurnBannerTimeout = setTimeout(() => banner.classList.remove('show'), 4500);
 }
 
 // ============================================================

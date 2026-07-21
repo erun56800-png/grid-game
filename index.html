@@ -57,6 +57,7 @@
           <div class="settings-row"><label>⏱ Temps limite par tour (s, 0 = illimité) <input type="number" id="turn-time-limit" value="0" min="0"></label></div>
           <div class="settings-row"><label>❌ Activer les pièges <input type="checkbox" id="traps-enabled-checkbox"></label></div>
           <div class="settings-row"><label>Nombre de pièges <input type="number" id="trap-count-input" value="10" min="0"></label></div>
+          <div class="settings-row"><label>🔮 Attribuer les déplacements à l'avance <input type="checkbox" id="preassign-moves-checkbox" checked></label></div>
         </div>
 
         <button id="btn-create-room" onclick="createRoomWithSettings()">✅ Créer la salle</button>
@@ -104,6 +105,9 @@
 
     <!-- BANNIÈRE "C'EST VOTRE TOUR" -->
     <div id="turn-alert-banner">🎮 C'est votre tour !</div>
+
+    <!-- BANNIÈRE D'ANNONCE DES PROCHAINS DÉPLACEMENTS -->
+    <div id="next-turn-info-banner"></div>
 
     <div id="game-body">
 

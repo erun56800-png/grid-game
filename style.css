@@ -267,6 +267,22 @@ body {
   padding: 10px;
 }
 
+#next-turn-info-banner {
+  text-align: center;
+  padding: 0;
+  max-height: 0;
+  overflow: hidden;
+  background: linear-gradient(90deg, #0f3460, #2196F3);
+  color: #fff;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+}
+#next-turn-info-banner.show {
+  max-height: 60px;
+  padding: 10px;
+}
+
 /* ===== PANNEAUX ===== */
 #panel-left {
   width: 220px;
