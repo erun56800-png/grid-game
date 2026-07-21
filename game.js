@@ -152,10 +152,6 @@ async function proceedFromLogin() {
     const candidateId = playerIdFor(myName);
     const existingPlayer = (state.players || {})[candidateId];
 
-    if (state.status === 'ended') {
-      errEl.textContent = 'Cette salle est fermée : la partie est définitivement terminée.';
-      return;
-    }
     if (existingPlayer && existingPlayer.online === true) {
       errEl.textContent = "Ce joueur est déjà dans la salle (fermez l'autre onglet ou choisissez un autre pseudo).";
       return;
@@ -349,8 +345,9 @@ function createPlayer(name, colorIndex) {
 // ============================================================
 //  GÉNÉRATION D'OBJETS ET DE PIÈGES
 // ============================================================
-function generateObjects(count, existingObjects) {
+function generateObjects(count, existingObjects, avoidTraps) {
   const objects = { ...existingObjects };
+  const traps = avoidTraps || {};
   let placed = 0;
   let attempts = 0;
   while (placed < count && attempts < 500) {
@@ -358,7 +355,7 @@ function generateObjects(count, existingObjects) {
     const x = Math.floor(Math.random() * GRID_SIZE);
     const y = Math.floor(Math.random() * GRID_SIZE);
     const key = `${x}_${y}`;
-    if (!objects[key]) {
+    if (!objects[key] && !traps[key]) {
       objects[key] = { x, y, type: 'star' };
       placed++;
     }
@@ -936,7 +933,7 @@ async function advanceTurn(objectsSnapshot) {
   const missing             = currentInitObjects() - currentObjectsCount;
   let newObjects            = { ...objectsSnapshot };
   if (missing > 0) {
-    newObjects = generateObjects(missing, newObjects);
+    newObjects = generateObjects(missing, newObjects, state.traps);
   }
 
   const newTurn   = nextIdx === 0 ? (state.turn || 1) + 1 : (state.turn || 1);
