@@ -2,13 +2,13 @@
 //  CONFIGURATION FIREBASE  ← REMPLACEZ PAR VOS VALEURS
 // ============================================================
 const firebaseConfig = {
-  apiKey: "VOTRE_API_KEY",
-  authDomain: "VOTRE_PROJECT.firebaseapp.com",
-  databaseURL: "https://VOTRE_PROJECT-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "VOTRE_PROJECT",
-  storageBucket: "VOTRE_PROJECT.appspot.com",
-  messagingSenderId: "VOTRE_SENDER_ID",
-  appId: "VOTRE_APP_ID"
+  apiKey: "AIzaSyBeXzev-66h0PDkAB4jfI0zQD_f68iPhWU",
+  authDomain: "grid-game-e511e.firebaseapp.com",
+  databaseURL: "https://grid-game-e511e-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "grid-game-e511e",
+  storageBucket: "grid-game-e511e.firebasestorage.app",
+  messagingSenderId: "777360639613",
+  appId: "1:777360639613:web:4108144b6ec0571e059314"
 };
 
 // ============================================================
