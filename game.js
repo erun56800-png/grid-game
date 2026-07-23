@@ -2,13 +2,13 @@
 //  CONFIGURATION FIREBASE  ← REMPLACEZ PAR VOS VALEURS
 // ============================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyBeXzev-66h0PDkAB4jfI0zQD_f68iPhWU",
-  authDomain: "grid-game-e511e.firebaseapp.com",
-  databaseURL: "https://grid-game-e511e-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "grid-game-e511e",
-  storageBucket: "grid-game-e511e.firebasestorage.app",
-  messagingSenderId: "777360639613",
-  appId: "1:777360639613:web:4108144b6ec0571e059314"
+  apiKey: "VOTRE_API_KEY",
+  authDomain: "VOTRE_PROJECT.firebaseapp.com",
+  databaseURL: "https://VOTRE_PROJECT-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "VOTRE_PROJECT",
+  storageBucket: "VOTRE_PROJECT.appspot.com",
+  messagingSenderId: "VOTRE_SENDER_ID",
+  appId: "VOTRE_APP_ID"
 };
 
 // ============================================================
@@ -63,6 +63,7 @@ let db, roomRef;
 let myId       = null;
 let myName     = '';
 let roomCode   = '';
+let amSpectator = false;
 let gameState  = null;   // copie locale du state Firebase
 let isMyTurn   = false;
 let canvas, ctx;
@@ -136,19 +137,26 @@ function toggleAdvancedSettings() {
 //  ÉCRAN DE CONNEXION → REJOINDRE / CRÉER UNE PARTIE
 // ============================================================
 async function proceedFromLogin() {
-  myName   = document.getElementById('player-name').value.trim();
-  roomCode = document.getElementById('room-code').value.trim().toUpperCase();
+  myName      = document.getElementById('player-name').value.trim();
+  roomCode    = document.getElementById('room-code').value.trim().toUpperCase();
+  amSpectator = document.getElementById('spectator-checkbox').checked;
   const errEl = document.getElementById('login-error');
   errEl.textContent = '';
 
-  if (!myName)   { errEl.textContent = 'Entrez votre pseudo.';       return; }
-  if (!roomCode) { errEl.textContent = 'Entrez un code de partie.';  return; }
+  if (!roomCode) { errEl.textContent = 'Entrez un code de partie.'; return; }
+  if (!amSpectator && !myName) { errEl.textContent = 'Entrez votre pseudo.'; return; }
 
   const checkRef = db.ref('rooms/' + roomCode);
   const snap = await checkRef.once('value');
 
   if (snap.exists()) {
     const state = snap.val();
+
+    if (amSpectator) {
+      await enterAsSpectator();
+      return;
+    }
+
     const candidateId = playerIdFor(myName);
     const existingPlayer = (state.players || {})[candidateId];
 
@@ -158,6 +166,10 @@ async function proceedFromLogin() {
     }
     await joinExistingRoom(state, candidateId, existingPlayer);
   } else {
+    if (amSpectator) {
+      errEl.textContent = "Cette salle n'existe pas encore : un joueur doit d'abord la créer.";
+      return;
+    }
     document.getElementById('host-settings').style.display = 'block';
     document.getElementById('btn-join').style.display = 'none';
   }
@@ -258,6 +270,34 @@ function enterGameScreen() {
   roomRef.on('value', onStateUpdate);
 }
 
+async function enterAsSpectator() {
+  myId    = null;
+  roomRef = db.ref('rooms/' + roomCode);
+
+  document.getElementById('screen-login').classList.remove('active');
+  document.getElementById('display-room').textContent   = roomCode;
+  document.getElementById('display-player').textContent = '👁 Spectateur';
+
+  canvas = document.getElementById('game-canvas');
+  ctx    = canvas.getContext('2d');
+
+  // Masquer tout ce qui ne concerne que les joueurs actifs
+  const idsToHide = [
+    'controls', 'mode-switch', 'ghost-toggle', 'queue-panel',
+    'waiting-msg', 'moves-left-line', 'my-score-line'
+  ];
+  idsToHide.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const personalLinkBtn = document.querySelectorAll('#room-info .small-btn')[0];
+  if (personalLinkBtn) personalLinkBtn.style.display = 'none';
+  const feedback = document.getElementById('personal-link-feedback');
+  if (feedback) feedback.style.display = 'none';
+
+  roomRef.on('value', onStateUpdate);
+}
+
 // ============================================================
 //  LIENS D'INVITATION
 // ============================================================
@@ -302,6 +342,31 @@ function showLinkFeedback(msg) {
     return;
   }
   addLocalLog(msg);
+}
+
+// ============================================================
+//  QR CODE (salle d'attente + espace de jeu)
+// ============================================================
+function renderQRCode(containerId, size) {
+  const container = document.getElementById(containerId);
+  if (!container || typeof QRCode === 'undefined') return;
+  container.innerHTML = '';
+  new QRCode(container, {
+    text: getInviteLink(),
+    width: size || 160,
+    height: size || 160,
+    colorDark: '#000000',
+    colorLight: '#ffffff'
+  });
+}
+
+function openQrModal() {
+  document.getElementById('qrcode-room-label').textContent = `Salle : ${roomCode}`;
+  renderQRCode('game-qrcode', 260);
+  document.getElementById('modal-qrcode').style.display = 'flex';
+}
+function closeQrModal() {
+  document.getElementById('modal-qrcode').style.display = 'none';
 }
 
 // ============================================================
@@ -467,8 +532,13 @@ function renderLobby() {
   document.getElementById('lobby-room-code').textContent = roomCode;
   const linkInput = document.getElementById('lobby-invite-link');
   if (linkInput) linkInput.value = getInviteLink();
-  const personalInput = document.getElementById('lobby-personal-link');
-  if (personalInput) personalInput.value = getPersonalLink();
+  const personalRow = document.getElementById('lobby-personal-link');
+  if (personalRow) {
+    personalRow.value = getPersonalLink();
+    personalRow.parentElement.style.display = amSpectator ? 'none' : 'flex';
+  }
+
+  renderQRCode('lobby-qrcode', 150);
 
   const players = gameState.players || {};
   const list = document.getElementById('lobby-player-list');
@@ -539,7 +609,7 @@ function syncMovementModeSelect() {
   if (!sel) return;
   const settings = gameState.settings || {};
   sel.value = settings.movementMode || 'relative';
-  sel.disabled = !(isHost() || !settings.modeLocked);
+  sel.disabled = amSpectator || !(isHost() || !settings.modeLocked);
 }
 
 function updateControlPad() {

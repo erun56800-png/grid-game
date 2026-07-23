@@ -182,6 +182,34 @@ body {
   text-align: center;
 }
 
+.spectator-row {
+  background: rgba(255,255,255,0.04);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.spectator-row label { font-size: 0.8rem; }
+
+#lobby-qrcode-wrap {
+  margin: 14px 0;
+  text-align: center;
+}
+#lobby-qrcode {
+  display: inline-block;
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+}
+#lobby-qrcode img { display: block; }
+
+.qrcode-big {
+  display: inline-block;
+  background: #fff;
+  padding: 16px;
+  border-radius: 10px;
+  margin: 10px auto;
+}
+
 /* ===== LAYOUT JEU ===== */
 #screen-game {
   flex-direction: column;

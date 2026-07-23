@@ -3,19 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Cap sur les étoiles - Multijoueur</title>
+  <title>Chasseurs d'Étoiles</title>
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
   <!-- ÉCRAN D'ACCUEIL -->
   <div id="screen-login" class="screen active">
     <div class="login-box">
-      <h1>🎮 Cap sur les étoiles</h1>
-      <p>Collectez les vite pour gagner !</p>
-       <p>Mission Numérique 56</p>
+      <h1>⭐ Chasseurs d'Étoiles</h1>
+      <p>Collectez des objets pour gagner !</p>
       <input type="text" id="player-name" placeholder="Votre pseudo" maxlength="12">
       <input type="text" id="room-code" placeholder="Code de partie (ex: ROOM1)" maxlength="8">
+      <div class="settings-row spectator-row">
+        <label><input type="checkbox" id="spectator-checkbox"> 👁 Ne participe pas au jeu (affichage sur écran/VPI)</label>
+      </div>
       <button id="btn-join" onclick="proceedFromLogin()">Rejoindre / Créer une partie</button>
 
       <div id="host-settings" style="display:none">
@@ -84,6 +87,11 @@
       </div>
       <div id="invite-link-feedback"></div>
 
+      <div id="lobby-qrcode-wrap">
+        <div id="lobby-qrcode"></div>
+        <p class="hint-text">📱 Scannez pour rejoindre la salle</p>
+      </div>
+
       <p id="lobby-player-count"></p>
       <ul id="lobby-player-list"></ul>
 
@@ -119,6 +127,7 @@
           <p>Joueur : <span id="display-player"></span></p>
           <button class="small-btn" onclick="copyPersonalLink()">🔗 Mon lien de reconnexion</button>
           <div id="personal-link-feedback" class="link-feedback"></div>
+          <button class="small-btn" onclick="openQrModal()">📱 Afficher le QR Code</button>
           <div id="movement-mode-display">
             <label>🧭
               <select id="movement-mode-select" onchange="changeMovementMode(this.value)">
@@ -137,8 +146,8 @@
         <div id="turn-info">
           <h3>⏱ Tour actuel</h3>
           <p>Joueur actif : <span id="current-player-name">-</span></p>
-          <p>Déplacements restants : <span id="moves-left">-</span></p>
-          <p>Objets collectés : <span id="my-score">0</span> / <span id="win-score-display">20</span></p>
+          <p id="moves-left-line">Déplacements restants : <span id="moves-left">-</span></p>
+          <p id="my-score-line">Objets collectés : <span id="my-score">0</span> / <span id="win-score-display">20</span></p>
           <p id="turn-timer-line"><span id="turn-timer" style="display:none"></span></p>
         </div>
 
@@ -259,6 +268,16 @@
         <button onclick="startNewRound()">🔁 Relancer une partie dans cette salle</button>
         <button onclick="location.reload()">🚪 Retourner à l'accueil</button>
       </div>
+    </div>
+  </div>
+
+  <!-- MODAL QR CODE (grand format, pour projection VPI) -->
+  <div id="modal-qrcode" class="modal" style="display:none">
+    <div class="modal-content">
+      <h1>📱 Rejoindre la salle</h1>
+      <p id="qrcode-room-label"></p>
+      <div id="game-qrcode" class="qrcode-big"></div>
+      <button onclick="closeQrModal()">Fermer</button>
     </div>
   </div>
 
