@@ -133,6 +133,11 @@ function toggleAdvancedSettings() {
   el.style.display = (el.style.display === 'none') ? 'block' : 'none';
 }
 
+function toggleTrapCountRow() {
+  const enabled = document.getElementById('traps-enabled-checkbox').checked;
+  document.getElementById('trap-count-row').style.display = enabled ? 'block' : 'none';
+}
+
 // ============================================================
 //  ÉCRAN DE CONNEXION → REJOINDRE / CRÉER UNE PARTIE
 // ============================================================

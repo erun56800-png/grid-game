@@ -22,46 +22,66 @@
       <button id="btn-join" onclick="proceedFromLogin()">Rejoindre / Créer une partie</button>
 
       <div id="host-settings" style="display:none">
-        <h3>Paramètres de la nouvelle salle</h3>
+        <h3>🎉 Nouvelle salle — configurons-la</h3>
 
-        <div class="settings-row">
-          <label><input type="radio" name="movement-mode" value="relative" checked> Mode relatif (↺ ⬆ ↻ ⬇)</label>
-        </div>
-        <div class="settings-row">
-          <label><input type="radio" name="movement-mode" value="absolute"> Mode absolu (N S E O)</label>
-        </div>
-        <div class="settings-row">
-          <label><input type="checkbox" id="lock-mode-checkbox"> 🔒 Verrouiller ce mode pour les autres joueurs</label>
-        </div>
-        <div class="settings-row">
-          <label>Nombre de joueurs attendus :
-            <input type="number" id="expected-players" min="1" max="8" value="2">
-          </label>
+        <div class="settings-step">
+          <div class="step-head"><span class="step-num">1</span> Combien de joueurs attendez-vous ?</div>
+          <div class="settings-row">
+            <label>Nombre de joueurs
+              <input type="number" id="expected-players" min="1" max="8" value="2">
+            </label>
+          </div>
+          <p class="step-hint">Juste indicatif : vous pourrez démarrer dès qu'un joueur aura rejoint, même seul.</p>
         </div>
 
-        <div class="settings-row">
-          <label>Interaction (direct / différé) :
-            <select id="game-mode-policy">
-              <option value="free">Libre pour chaque joueur</option>
-              <option value="forceDirect">Forcer le mode direct</option>
-              <option value="forceDeferred">Forcer le mode différé</option>
-            </select>
-          </label>
-        </div>
-        <div class="settings-row">
-          <label><input type="checkbox" id="ghost-allowed-checkbox" checked> Autoriser l'aperçu fantôme (mode différé)</label>
+        <div class="settings-step">
+          <div class="step-head"><span class="step-num">2</span> Comment se déplace-t-on sur le plateau ?</div>
+          <div class="settings-row">
+            <label><input type="radio" name="movement-mode" value="relative" checked> ↺⬆↻⬇ Mode relatif — pivoter puis avancer/reculer</label>
+          </div>
+          <div class="settings-row">
+            <label><input type="radio" name="movement-mode" value="absolute"> 🧭 Mode absolu — Nord / Sud / Est / Ouest</label>
+          </div>
+          <p class="step-hint">Chaque joueur peut choisir son mode préféré en cours de partie.</p>
+          <div class="settings-subrow">
+            <label><input type="checkbox" id="lock-mode-checkbox"> 🔒 Imposer ce mode à tout le monde (empêche d'en changer)</label>
+          </div>
         </div>
 
-        <button type="button" id="btn-toggle-advanced" onclick="toggleAdvancedSettings()">⚙️ Paramètres avancés</button>
+        <div class="settings-step">
+          <div class="step-head"><span class="step-num">3</span> Comment se joue un tour ?</div>
+          <div class="settings-row">
+            <label>Interaction
+              <select id="game-mode-policy">
+                <option value="free">Libre pour chaque joueur (recommandé)</option>
+                <option value="forceDirect">⚡ Toujours en direct</option>
+                <option value="forceDeferred">📝 Toujours en différé</option>
+              </select>
+            </label>
+          </div>
+          <p class="step-hint">⚡ Direct : chaque action part immédiatement. 📝 Différé : le joueur prépare plusieurs actions puis les valide d'un coup.</p>
+          <div class="settings-subrow">
+            <label><input type="checkbox" id="ghost-allowed-checkbox" checked> 👻 Autoriser l'aperçu fantôme en mode différé</label>
+          </div>
+        </div>
+
+        <button type="button" id="btn-toggle-advanced" onclick="toggleAdvancedSettings()">⚙️ Réglages avancés (facultatif)</button>
         <div id="advanced-settings" style="display:none">
-          <div class="settings-row"><label>Déplacements min / tour <input type="number" id="min-moves" value="1" min="1"></label></div>
-          <div class="settings-row"><label>Déplacements max / tour <input type="number" id="max-moves" value="10" min="1"></label></div>
+          <p class="adv-subhead">🎯 Objectif de la partie</p>
           <div class="settings-row"><label>Objets pour gagner <input type="number" id="win-score-input" value="20" min="1"></label></div>
           <div class="settings-row"><label>Nombre d'objets sur le plateau <input type="number" id="init-objects-input" value="15" min="1"></label></div>
-          <div class="settings-row"><label>⏱ Temps limite par tour (s, 0 = illimité) <input type="number" id="turn-time-limit" value="0" min="0"></label></div>
-          <div class="settings-row"><label>❌ Activer les pièges <input type="checkbox" id="traps-enabled-checkbox"></label></div>
-          <div class="settings-row"><label>Nombre de pièges <input type="number" id="trap-count-input" value="10" min="0"></label></div>
-          <div class="settings-row"><label>🔮 Attribuer les déplacements à l'avance <input type="checkbox" id="preassign-moves-checkbox" checked></label></div>
+
+          <p class="adv-subhead">🚶 Déplacements par tour</p>
+          <div class="settings-row"><label>Minimum <input type="number" id="min-moves" value="1" min="1"></label></div>
+          <div class="settings-row"><label>Maximum <input type="number" id="max-moves" value="10" min="1"></label></div>
+          <div class="settings-row"><label>🔮 Tirer les déplacements à l'avance <input type="checkbox" id="preassign-moves-checkbox" checked></label></div>
+
+          <p class="adv-subhead">⏱ Temps</p>
+          <div class="settings-row"><label>Temps limite par tour (s, 0 = illimité) <input type="number" id="turn-time-limit" value="0" min="0"></label></div>
+
+          <p class="adv-subhead">❌ Pièges</p>
+          <div class="settings-row"><label>Activer les pièges <input type="checkbox" id="traps-enabled-checkbox" onchange="toggleTrapCountRow()"></label></div>
+          <div class="settings-row" id="trap-count-row" style="display:none"><label>Nombre de pièges <input type="number" id="trap-count-input" value="10" min="0"></label></div>
         </div>
 
         <button id="btn-create-room" onclick="createRoomWithSettings()">✅ Créer la salle</button>

@@ -85,6 +85,62 @@ body {
   font-size: 0.85rem;
   color: #ddd;
 }
+
+/* Étapes progressives (formulaire de création de salle) */
+.settings-step {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #2a2a3d;
+}
+.settings-step:last-of-type { border-bottom: none; margin-bottom: 10px; }
+.step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 8px;
+}
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: linear-gradient(90deg, #e94560, #0f3460);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.step-hint {
+  font-size: 0.75rem;
+  color: #888;
+  line-height: 1.35;
+  margin: 4px 0 8px 28px;
+}
+.settings-subrow {
+  margin: 4px 0 0 28px;
+  font-size: 0.8rem;
+  color: #bbb;
+}
+.settings-subrow label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.adv-subhead {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: #e94560;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 12px 0 6px;
+}
+.adv-subhead:first-child { margin-top: 0; }
 .settings-row label {
   display: flex;
   align-items: center;
