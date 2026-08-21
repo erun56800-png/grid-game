@@ -144,6 +144,12 @@
     <!-- BANNIÈRE D'ANNONCE DES PROCHAINS DÉPLACEMENTS -->
     <div id="next-turn-info-banner"></div>
 
+    <!-- BARRE RAPIDE HÔTE : toujours visible pendant la partie, sans passer par les réglages -->
+    <div id="host-quick-bar" style="display:none">
+      <span id="host-quick-turn-timer">⏱ -</span>
+      <button id="host-quick-skip-btn" onclick="hostForceNextPlayer()" style="display:none">⏭ Joueur suivant</button>
+    </div>
+
     <div id="game-body">
 
       <!-- PANNEAU GAUCHE : Infos -->
@@ -318,8 +324,18 @@
         </div>
       </div>
 
-      <!-- PANNEAU DROIT : Légende -->
+      <!-- PANNEAU DROIT : Chat + Légende -->
       <div id="panel-right">
+        <div id="chat-panel">
+          <h3>💬 Chat <span id="chat-unread-badge" class="chat-badge" style="display:none">0</span></h3>
+          <div id="chat-messages"></div>
+          <div id="chat-input-row">
+            <input type="text" id="chat-input" placeholder="Message..." maxlength="200"
+                   onfocus="markChatRead()" onkeydown="if(event.key==='Enter') sendChatMessage()">
+            <button onclick="sendChatMessage()">➤</button>
+          </div>
+        </div>
+
         <h3>🗺 Légende</h3>
         <div class="legend-item"><span class="legend-color" style="background:#4CAF50"></span> Vous</div>
         <div class="legend-item"><span class="legend-color" style="background:#2196F3"></span> Autres joueurs</div>
