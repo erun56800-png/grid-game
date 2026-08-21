@@ -82,6 +82,9 @@
           <p class="adv-subhead">❌ Pièges</p>
           <div class="settings-row"><label>Activer les pièges <input type="checkbox" id="traps-enabled-checkbox" onchange="toggleTrapCountRow()"></label></div>
           <div class="settings-row" id="trap-count-row" style="display:none"><label>Nombre de pièges <input type="number" id="trap-count-input" value="10" min="0"></label></div>
+
+          <p class="adv-subhead">🔁 Revanche</p>
+          <div class="settings-row"><label>Durée pour rejoindre une nouvelle partie (s) <input type="number" id="rejoin-window-input" value="120" min="10"></label></div>
         </div>
 
         <button id="btn-create-room" onclick="createRoomWithSettings()">✅ Créer la salle</button>
@@ -118,6 +121,9 @@
       <div id="lobby-host-controls" style="display:none">
         <button id="btn-launch-game" onclick="launchGameFromLobby()">▶ Démarrer la partie</button>
         <p class="hint-text">Vous pouvez démarrer dès qu'un ou plusieurs joueurs ont rejoint (y compris seul).</p>
+        <button class="small-btn" onclick="copyHostLink()">🔑 Copier le lien de reconfiguration totale</button>
+        <div id="lobby-host-link-feedback" class="link-feedback"></div>
+        <p class="hint-text">Ce lien vous redonne les pleins pouvoirs sur cette salle (même en spectateur ou depuis un autre appareil). Gardez-le secret.</p>
       </div>
       <div id="lobby-wait-msg" style="display:none">
         <div class="spinner"></div>
@@ -169,6 +175,72 @@
           <p id="moves-left-line">Déplacements restants : <span id="moves-left">-</span></p>
           <p id="my-score-line">Objets collectés : <span id="my-score">0</span> / <span id="win-score-display">20</span></p>
           <p id="turn-timer-line"><span id="turn-timer" style="display:none"></span></p>
+        </div>
+
+        <div id="host-panel" style="display:none">
+          <h3>🛠 Panneau de l'hôte <button class="small-btn" id="btn-toggle-host-panel" onclick="toggleHostPanel()">Afficher</button></h3>
+          <div id="host-panel-body" style="display:none">
+
+            <div class="host-section">
+              <h4>🔑 Accès hôte</h4>
+              <button class="small-btn" onclick="copyHostLink()">🔗 Copier le lien de reconfiguration totale</button>
+              <div id="host-link-feedback" class="link-feedback"></div>
+              <p class="hint-text">Ce lien vous redonne les pleins pouvoirs sur cette salle (même en spectateur ou depuis un autre appareil). Gardez-le secret.</p>
+            </div>
+
+            <div class="host-section">
+              <h4>🧭 Déplacement</h4>
+              <div class="settings-row">
+                <label><input type="checkbox" id="host-mode-locked" onchange="hostUpdateSetting('modeLocked', this.checked)"> 🔒 Imposer le même mode à tous</label>
+              </div>
+              <div class="settings-row" id="host-locked-mode-row" style="display:none">
+                <label>Mode imposé
+                  <select id="host-movement-mode" onchange="hostUpdateSetting('movementMode', this.value)">
+                    <option value="relative">Relatif (↺➡↻)</option>
+                    <option value="absolute">Absolu (N S E O)</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="host-section">
+              <h4>⚡📝 Interaction</h4>
+              <div class="settings-row">
+                <label>Politique
+                  <select id="host-game-mode-policy" onchange="hostUpdateSetting('gameModePolicy', this.value)">
+                    <option value="free">Libre pour chaque joueur</option>
+                    <option value="forceDirect">⚡ Toujours en direct</option>
+                    <option value="forceDeferred">📝 Toujours en différé</option>
+                  </select>
+                </label>
+              </div>
+              <div class="settings-row">
+                <label><input type="checkbox" id="host-ghost-allowed" onchange="hostUpdateSetting('ghostAllowed', this.checked)"> 👻 Autoriser l'aperçu fantôme</label>
+              </div>
+              <p class="step-hint">Un changement s'applique à chaque joueur dès le début de son prochain tour.</p>
+            </div>
+
+            <div class="host-section">
+              <h4>⏱ Temps</h4>
+              <div class="settings-row">
+                <label>Temps limite par tour (s, 0 = illimité)
+                  <input type="number" id="host-turn-time-limit" min="0" onchange="hostUpdateSetting('turnTimeLimit', parseInt(this.value)||0)">
+                </label>
+              </div>
+              <div class="settings-row">
+                <label>Durée pour rejoindre une nouvelle partie (s)
+                  <input type="number" id="host-rejoin-window" min="10" onchange="hostUpdateSetting('rejoinWindowMs', (parseInt(this.value)||120)*1000)">
+                </label>
+              </div>
+            </div>
+
+            <div class="host-section">
+              <h4>👥 Activité des joueurs</h4>
+              <div id="host-activity-list"></div>
+              <p class="step-hint" id="host-skip-hint" style="display:none">Aucun temps limite n'est configuré : utilisez ⏭ pour forcer le passage au joueur suivant en cas d'inactivité prolongée.</p>
+            </div>
+
+          </div>
         </div>
 
         <div id="log-panel">
@@ -285,7 +357,7 @@
       <p id="modal-countdown"></p>
       <div id="modal-vote-buttons"></div>
       <div id="modal-ended-actions" style="display:none">
-        <button onclick="startNewRound()">🔁 Relancer une partie dans cette salle</button>
+        <button onclick="startRound()">🔁 Relancer une partie dans cette salle</button>
         <button onclick="location.reload()">🚪 Retourner à l'accueil</button>
       </div>
     </div>

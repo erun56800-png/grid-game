@@ -23,7 +23,7 @@ const DEFAULT_MAX_MOVES    = 10;
 const DEFAULT_TRAP_COUNT = 10;   // nombre de cases pièges par défaut
 const DIRECTIONS       = ['N', 'E', 'S', 'W'];
 const DIR_VECTORS      = { N:[0,-1], E:[1,0], S:[0,1], W:[-1,0] };
-const REMATCH_DELAY_MS = 15000; // durée de vote pour la revanche
+const DEFAULT_REJOIN_WINDOW_MS = 120000; // 2 min par défaut pour rejoindre une nouvelle partie
 
 // Couleurs joueurs
 const PLAYER_COLORS  = ['#4CAF50','#2196F3','#FF5722','#9C27B0',
@@ -68,6 +68,11 @@ let gameState  = null;   // copie locale du state Firebase
 let isMyTurn   = false;
 let canvas, ctx;
 
+// ── Hôte de la salle ──
+let myHostToken     = null;  // jeton local prouvant le statut d'hôte (indépendant du pseudo)
+let hostTokenParam   = null; // jeton lu dans l'URL (?host=...) avant vérification
+let hostActivityInterval = null;
+
 // ── Mode différé ──
 let gameMode         = 'direct';  // 'direct' | 'deferred'
 let commandQueue      = [];        // actions en attente (mode différé)
@@ -97,13 +102,15 @@ let lastBeepSecond    = null;
 firebase.initializeApp(firebaseConfig);
 db = firebase.database();
 
-// Pré-remplir le code de salle et/ou le pseudo depuis l'URL (?room=XXXX&name=YYY)
+// Pré-remplir le code de salle et/ou le pseudo depuis l'URL (?room=XXXX&name=YYY&host=TOKEN)
 window.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
   const roomParam = params.get('room');
   const nameParam  = params.get('name');
+  const hostParam  = params.get('host');
   if (roomParam) document.getElementById('room-code').value = roomParam.toUpperCase();
   if (nameParam)  document.getElementById('player-name').value = nameParam;
+  if (hostParam)  hostTokenParam = hostParam;
 });
 
 // ============================================================
@@ -117,6 +124,10 @@ function slugifyName(name) {
 }
 function playerIdFor(name) {
   return 'player_' + slugifyName(name);
+}
+function generateHostToken() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'host-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 function randomMovesFromSettings(settings) {
   const min = (settings && settings.minMoves) || DEFAULT_MIN_MOVES;
@@ -157,6 +168,12 @@ async function proceedFromLogin() {
   if (snap.exists()) {
     const state = snap.val();
 
+    // Lien de reconfiguration totale : le jeton dans l'URL donne le statut d'hôte
+    // quel que soit le pseudo choisi ou le statut spectateur.
+    if (hostTokenParam && state.settings && state.settings.hostToken === hostTokenParam) {
+      myHostToken = hostTokenParam;
+    }
+
     if (amSpectator) {
       await enterAsSpectator();
       return;
@@ -171,10 +188,8 @@ async function proceedFromLogin() {
     }
     await joinExistingRoom(state, candidateId, existingPlayer);
   } else {
-    if (amSpectator) {
-      errEl.textContent = "Cette salle n'existe pas encore : un joueur doit d'abord la créer.";
-      return;
-    }
+    // La salle n'existe pas encore : on peut la créer, y compris en restant spectateur
+    // (l'hôte n'est alors pas un joueur actif — utile pour un affichage projeté en classe).
     document.getElementById('host-settings').style.display = 'block';
     document.getElementById('btn-join').style.display = 'none';
   }
@@ -194,28 +209,41 @@ async function createRoomWithSettings() {
   const trapsEnabled     = document.getElementById('traps-enabled-checkbox').checked;
   const trapCount        = Math.max(0, parseInt(document.getElementById('trap-count-input').value) || 0);
   const preAssignMoves   = document.getElementById('preassign-moves-checkbox').checked;
+  const rejoinWindowMs   = Math.max(10, parseInt(document.getElementById('rejoin-window-input').value) || 120) * 1000;
 
   const errEl = document.getElementById('login-error');
-  const candidateId = playerIdFor(myName);
+  const hostToken = generateHostToken();
+  myHostToken = hostToken;
 
-  myId    = candidateId;
   roomRef = db.ref('rooms/' + roomCode);
 
+  let hostId = null;
+  if (!amSpectator) {
+    myId   = playerIdFor(myName);
+    hostId = myId;
+  }
+
   const settings = {
-    movementMode, modeLocked, hostId: myId, expectedPlayers,
+    movementMode, modeLocked, hostId, hostToken, expectedPlayers,
     gameModePolicy, ghostAllowed,
     minMoves, maxMoves, winScore, initObjects, turnTimeLimit,
-    trapsEnabled, trapCount, preAssignMoves
+    trapsEnabled, trapCount, preAssignMoves, rejoinWindowMs
   };
 
   const initialState = createInitialState(settings);
-  initialState.players[myId] = createPlayer(myName, 0);
+  if (!amSpectator) {
+    initialState.players[myId] = createPlayer(myName, 0, movementMode);
+  }
 
   await roomRef.set(initialState);
-  await pushLog(`Partie créée par ${myName}`);
+  await pushLog(amSpectator ? "Salle créée par l'hôte (spectateur)" : `Partie créée par ${myName}`);
 
   setupPresence();
-  enterGameScreen();
+  if (amSpectator) {
+    await enterAsSpectator();
+  } else {
+    enterGameScreen();
+  }
 }
 
 async function joinExistingRoom(state, candidateId, existingPlayer) {
@@ -229,7 +257,8 @@ async function joinExistingRoom(state, candidateId, existingPlayer) {
   } else {
     const playerCount = Object.keys(state.players || {}).length;
     const colorIndex  = playerCount % PLAYER_COLORS.length;
-    const newPlayer   = createPlayer(myName, colorIndex);
+    const defaultMode = (state.settings && state.settings.movementMode) || 'relative';
+    const newPlayer   = createPlayer(myName, colorIndex, defaultMode);
 
     if (state.status === 'playing') {
       const preAssign = state.settings ? state.settings.preAssignMoves !== false : true;
@@ -254,6 +283,7 @@ async function joinExistingRoom(state, candidateId, existingPlayer) {
 }
 
 function setupPresence() {
+  if (!myId) return; // spectateur : pas de fiche joueur à suivre
   const myOnlineRef = roomRef.child('players/' + myId + '/online');
   const connectedRef = db.ref('.info/connected');
   connectedRef.on('value', (snap) => {
@@ -273,6 +303,7 @@ function enterGameScreen() {
   ctx    = canvas.getContext('2d');
 
   roomRef.on('value', onStateUpdate);
+  startHostActivityTicker();
 }
 
 async function enterAsSpectator() {
@@ -301,6 +332,14 @@ async function enterAsSpectator() {
   if (feedback) feedback.style.display = 'none';
 
   roomRef.on('value', onStateUpdate);
+  startHostActivityTicker();
+}
+
+function startHostActivityTicker() {
+  clearInterval(hostActivityInterval);
+  hostActivityInterval = setInterval(() => {
+    if (gameState && gameState.status === 'playing' && isHost()) renderHostActivityList();
+  }, 1000);
 }
 
 // ============================================================
@@ -319,6 +358,14 @@ function getPersonalLink() {
   url.searchParams.set('name', myName);
   return url.toString();
 }
+function getHostLink() {
+  const token = myHostToken || (gameState && gameState.settings && gameState.settings.hostToken) || '';
+  const url = new URL(location.href);
+  url.search = '';
+  url.searchParams.set('room', roomCode);
+  url.searchParams.set('host', token);
+  return url.toString();
+}
 async function copyInviteLink() {
   try {
     await navigator.clipboard.writeText(getInviteLink());
@@ -330,6 +377,12 @@ async function copyPersonalLink() {
     await navigator.clipboard.writeText(getPersonalLink());
     showLinkFeedback('✅ Lien personnel copié !');
   } catch (e) { window.prompt('Copiez ce lien :', getPersonalLink()); }
+}
+async function copyHostLink() {
+  try {
+    await navigator.clipboard.writeText(getHostLink());
+    showFeedbackIn('host-link-feedback', 'lobby-host-link-feedback', '✅ Lien hôte copié !');
+  } catch (e) { window.prompt('Copiez ce lien (à garder secret) :', getHostLink()); }
 }
 
 function showLinkFeedback(msg) {
@@ -347,6 +400,17 @@ function showLinkFeedback(msg) {
     return;
   }
   addLocalLog(msg);
+}
+
+// Affiche un message de confirmation dans le premier élément visible parmi les deux fournis
+// (utile quand la même action est disponible depuis plusieurs écrans, ex. lien hôte
+// depuis la salle d'attente ou depuis l'écran de jeu).
+function showFeedbackIn(primaryId, secondaryId, msg) {
+  const primary = document.getElementById(primaryId);
+  const el = (primary && primary.offsetParent !== null) ? primary : document.getElementById(secondaryId);
+  if (!el) return;
+  el.textContent = msg;
+  setTimeout(() => { el.textContent = ''; }, 2500);
 }
 
 // ============================================================
@@ -398,17 +462,19 @@ function createInitialState(settings) {
   };
 }
 
-function createPlayer(name, colorIndex) {
+function createPlayer(name, colorIndex, movementMode) {
   return {
-    name:       name,
-    colorIndex: colorIndex,
-    x:          Math.floor(Math.random() * GRID_SIZE),
-    y:          Math.floor(Math.random() * GRID_SIZE),
-    direction:  DIRECTIONS[Math.floor(Math.random() * 4)],
-    score:      0,
-    movesLeft:  0,
-    movesUsed:  0,
-    online:     true
+    name:         name,
+    colorIndex:   colorIndex,
+    x:            Math.floor(Math.random() * GRID_SIZE),
+    y:            Math.floor(Math.random() * GRID_SIZE),
+    direction:    DIRECTIONS[Math.floor(Math.random() * 4)],
+    score:        0,
+    movesLeft:    0,
+    movesUsed:    0,
+    movementMode: movementMode || 'relative',
+    totalActiveMs: 0,
+    online:       true
   };
 }
 
@@ -487,6 +553,7 @@ function onStateUpdate(snap) {
   updateScreenForStatus();
 
   if (gameState.status === 'waiting') {
+    hideFinishedModal(); // au cas où l'on revient d'une partie terminée
     renderLobby();
     return;
   }
@@ -511,6 +578,7 @@ function onStateUpdate(snap) {
     playTurnSound();
     flashTurnAlert();
     startTurnTimer();
+    enforceForcedSettingsForNewTurn();
   }
 
   if (gameState.status === 'finished' || gameState.status === 'ended') {
@@ -521,7 +589,10 @@ function onStateUpdate(snap) {
 }
 
 function isHost() {
-  return !!gameState && gameState.settings && gameState.settings.hostId === myId;
+  if (!gameState || !gameState.settings) return false;
+  const settings = gameState.settings;
+  if (myHostToken && settings.hostToken && myHostToken === settings.hostToken) return true;
+  return myId !== null && settings.hostId === myId;
 }
 
 function updateScreenForStatus() {
@@ -546,10 +617,16 @@ function renderLobby() {
   renderQRCode('lobby-qrcode', 150);
 
   const players = gameState.players || {};
+  const rejoinStatus = gameState.rejoinStatus || {};
   const list = document.getElementById('lobby-player-list');
-  list.innerHTML = Object.values(players).map(p =>
-    `<li class="${p.online === false ? 'offline-item' : ''}">${p.name}${p.online === false ? ' (hors ligne)' : ''}</li>`
-  ).join('');
+  list.innerHTML = Object.entries(players).map(([id, p]) => {
+    const badge = rejoinStatus[id] === 'accepted'
+      ? '<span class="badge badge-accepted">✅ A accepté</span>'
+      : rejoinStatus[id] === 'left'
+        ? '<span class="badge badge-left">❌ A quitté</span>'
+        : '';
+    return `<li class="${p.online === false ? 'offline-item' : ''}">${p.name}${p.online === false ? ' (hors ligne)' : ''}${badge}</li>`;
+  }).join('');
 
   const expected = (gameState.settings && gameState.settings.expectedPlayers) || 2;
   document.getElementById('lobby-player-count').textContent =
@@ -567,58 +644,105 @@ function renderLobby() {
 }
 
 async function launchGameFromLobby() {
-  const ids = Object.keys(gameState.players || {});
+  await startRound();
+}
+
+// Démarre (ou relance) une partie : sert au tout premier lancement depuis la
+// salle d'attente comme au redémarrage d'une nouvelle partie après une revanche.
+// Réinitialise systématiquement position/score/objets/pièges pour chaque joueur
+// actuellement dans la salle.
+async function startRound() {
+  const players = gameState.players || {};
+  const ids = Object.keys(players);
   if (ids.length === 0) return;
 
-  const shuffled = [...ids].sort(() => Math.random() - 0.5);
-  const firstId  = shuffled[0];
+  const shuffled  = [...ids].sort(() => Math.random() - 0.5);
+  const firstId   = shuffled[0];
   const preAssign = getSetting('preAssignMoves', true);
+  const modeLocked  = getSetting('modeLocked', false);
+  const imposedMode = getSetting('movementMode', 'relative');
+
+  const resetPlayers = {};
+  ids.forEach(id => {
+    resetPlayers[id] = {
+      ...players[id],
+      x:             Math.floor(Math.random() * GRID_SIZE),
+      y:             Math.floor(Math.random() * GRID_SIZE),
+      direction:     DIRECTIONS[Math.floor(Math.random() * 4)],
+      score:         0,
+      movesUsed:     0,
+      movesLeft:     0,
+      totalActiveMs: 0,
+      movementMode:  modeLocked ? imposedMode : (players[id].movementMode || imposedMode)
+    };
+  });
+  if (preAssign) {
+    shuffled.forEach(id => { resetPlayers[id].movesLeft = randomMoves(); });
+  } else {
+    resetPlayers[firstId].movesLeft = randomMoves();
+  }
+
+  const hasHistory = Object.keys(gameState.history || {}).length > 0;
+  const gameNumber  = hasHistory ? (gameState.gameNumber || 1) + 1 : (gameState.gameNumber || 1);
+
+  const newObjects   = generateObjects(currentInitObjects(), {});
+  const trapsEnabled = getSetting('trapsEnabled', false);
+  const trapCount    = getSetting('trapCount', DEFAULT_TRAP_COUNT);
+  const newTraps      = trapsEnabled ? generateTraps(trapCount, newObjects) : {};
 
   const updates = {
     status:        'playing',
     turn:          1,
     currentPlayer: firstId,
     playerOrder:   shuffled,
+    players:       resetPlayers,
+    objects:       newObjects,
+    traps:         newTraps,
+    winner:        null,
+    rematchVotes:  {},
+    rejoinStatus:  null,
+    gameNumber:    gameNumber,
     turnStartedAt: Date.now()
   };
 
-  if (preAssign) {
-    shuffled.forEach(id => {
-      updates[`players/${id}/movesLeft`] = randomMoves();
-    });
-  } else {
-    updates[`players/${firstId}/movesLeft`] = randomMoves();
-  }
-
   await roomRef.update(updates);
-  const firstMoves = updates[`players/${firstId}/movesLeft`];
-  await pushLog(`Tour 1 — ${gameState.players[firstId].name} joue (${firstMoves} déplacements)`);
+  const label = hasHistory ? `🔁 Nouvelle partie (partie n°${gameNumber})` : 'Tour 1';
+  await pushLog(`${label} — ${resetPlayers[firstId].name} commence (${resetPlayers[firstId].movesLeft} déplacements)`);
 }
 
 // ============================================================
-//  MODE DE DÉPLACEMENT (relatif / absolu)
+//  MODE DE DÉPLACEMENT (relatif / absolu) — choix individuel par joueur,
+//  sauf verrouillage par l'hôte (auquel cas le mode imposé s'applique à tous).
 // ============================================================
+function effectiveMovementMode(player) {
+  const settings = (gameState && gameState.settings) || {};
+  if (settings.modeLocked) return settings.movementMode || 'relative';
+  return (player && player.movementMode) || settings.movementMode || 'relative';
+}
+
 async function changeMovementMode(mode) {
+  if (amSpectator || !myId) return;
   const settings = gameState.settings || {};
-  const allowed = isHost() || !settings.modeLocked;
-  if (!allowed) {
-    document.getElementById('movement-mode-select').value = settings.movementMode;
-    addLocalLog("🔒 Le mode de déplacement est verrouillé par l'hôte.");
+  if (settings.modeLocked) {
+    document.getElementById('movement-mode-select').value = settings.movementMode || 'relative';
+    addLocalLog("🔒 Le mode de déplacement est imposé par l'hôte.");
     return;
   }
-  await roomRef.update({ 'settings/movementMode': mode });
+  await roomRef.update({ [`players/${myId}/movementMode`]: mode });
 }
 
 function syncMovementModeSelect() {
   const sel = document.getElementById('movement-mode-select');
   if (!sel) return;
   const settings = gameState.settings || {};
-  sel.value = settings.movementMode || 'relative';
-  sel.disabled = amSpectator || !(isHost() || !settings.modeLocked);
+  const myPlayer = myId ? gameState.players[myId] : null;
+  sel.value = effectiveMovementMode(myPlayer);
+  sel.disabled = amSpectator || !myId || !!settings.modeLocked;
 }
 
 function updateControlPad() {
-  const mode = (gameState.settings && gameState.settings.movementMode) || 'relative';
+  const myPlayer = myId ? gameState.players[myId] : null;
+  const mode = effectiveMovementMode(myPlayer);
   document.getElementById('controls-grid-relative').style.display = (mode === 'relative') ? 'grid' : 'none';
   document.getElementById('controls-grid-absolute').style.display = (mode === 'absolute') ? 'grid' : 'none';
 }
@@ -632,29 +756,44 @@ function setGameModeLocal(mode) {
   if (queuePanel) queuePanel.style.display = (mode === 'deferred') ? 'block' : 'none';
 }
 
+// Affichage continu (sans danger : ne modifie jamais l'état d'un tour en cours).
+// L'application effective d'un mode imposé se fait uniquement au début du
+// prochain tour du joueur — voir enforceForcedSettingsForNewTurn().
 function applyGameModePolicy() {
   const policy = (gameState.settings && gameState.settings.gameModePolicy) || 'free';
   const modeSwitch = document.getElementById('mode-switch');
+  if (modeSwitch) modeSwitch.style.display = (policy === 'free') ? 'flex' : 'none';
 
-  if (policy === 'forceDirect') {
-    if (gameMode !== 'direct') setGameModeLocal('direct');
-    if (modeSwitch) modeSwitch.style.display = 'none';
-  } else if (policy === 'forceDeferred') {
-    if (gameMode !== 'deferred') setGameModeLocal('deferred');
-    if (modeSwitch) modeSwitch.style.display = 'none';
-  } else {
-    if (modeSwitch) modeSwitch.style.display = 'flex';
-  }
+  document.querySelectorAll('input[name="game-mode"]').forEach(r => { r.checked = (r.value === gameMode); });
 
   const ghostAllowed = gameState.settings ? gameState.settings.ghostAllowed !== false : true;
   const ghostToggle = document.getElementById('ghost-toggle');
-  if (!ghostAllowed) {
+  if (ghostToggle) {
+    ghostToggle.style.display = (ghostAllowed && gameMode === 'deferred') ? 'block' : 'none';
+  }
+}
+
+// Applique les réglages imposés par l'hôte (mode direct/différé, fantôme) au
+// moment précis où mon tour commence — jamais en pleine action, pour ne pas
+// perdre une file de commandes en cours de préparation.
+function enforceForcedSettingsForNewTurn() {
+  const settings = gameState.settings || {};
+  const policy = settings.gameModePolicy || 'free';
+
+  if (policy === 'forceDirect' && gameMode !== 'direct') {
+    if (commandQueue.length > 0) addLocalLog('⚠️ Mode direct imposé par l\'hôte : file de commandes vidée.');
+    setGameModeLocal('direct');
+    commandQueue = [];
+    previewOverride = null;
+  } else if (policy === 'forceDeferred' && gameMode !== 'deferred') {
+    setGameModeLocal('deferred');
+  }
+
+  const ghostAllowed = settings.ghostAllowed !== false;
+  if (!ghostAllowed && showGhostPreview) {
     showGhostPreview = false;
     const cb = document.getElementById('ghost-checkbox');
     if (cb) cb.checked = false;
-    if (ghostToggle) ghostToggle.style.display = 'none';
-  } else if (ghostToggle) {
-    ghostToggle.style.display = (gameMode === 'deferred') ? 'block' : 'none';
   }
 }
 
@@ -997,10 +1136,11 @@ async function endTurnDeferred() {
 // ============================================================
 //  PASSER LA MAIN AU JOUEUR SUIVANT (partagé par les 2 modes)
 // ============================================================
-async function advanceTurn(objectsSnapshot) {
+async function advanceTurn(objectsSnapshot, finishingId) {
   const state       = gameState;
+  const activeId    = finishingId || myId;
   const playerOrder = state.playerOrder || Object.keys(state.players);
-  const currentIdx  = playerOrder.indexOf(myId);
+  const currentIdx  = playerOrder.indexOf(activeId);
   const nextIdx     = (currentIdx + 1) % playerOrder.length;
   const nextId      = playerOrder[nextIdx];
 
@@ -1014,12 +1154,24 @@ async function advanceTurn(objectsSnapshot) {
   const newTurn   = nextIdx === 0 ? (state.turn || 1) + 1 : (state.turn || 1);
   const preAssign = getSetting('preAssignMoves', true);
 
+  // Temps passé actif par le joueur qui termine son tour (compteur cumulé,
+  // affiché au panneau hôte).
+  const activePlayerBefore = state.players[activeId];
+  const elapsedForActive   = Date.now() - (state.turnStartedAt || Date.now());
+
   const updates = {
     currentPlayer: nextId,
     turn:          newTurn,
     objects:       newObjects,
-    turnStartedAt: Date.now()
+    turnStartedAt: Date.now(),
+    [`players/${activeId}/totalActiveMs`]: (activePlayerBefore ? (activePlayerBefore.totalActiveMs || 0) : 0) + elapsedForActive
   };
+
+  // Mode de déplacement imposé par l'hôte : appliqué au joueur suivant dès
+  // le début de son tour (ne perturbe jamais un tour déjà en cours).
+  if (state.settings && state.settings.modeLocked) {
+    updates[`players/${nextId}/movementMode`] = state.settings.movementMode || 'relative';
+  }
 
   let logMsg;
   let announceCount = null;
@@ -1027,12 +1179,11 @@ async function advanceTurn(objectsSnapshot) {
   if (preAssign) {
     // Le joueur qui termine son tour reçoit dès maintenant ses déplacements
     // pour son PROCHAIN tour (au lieu d'attendre que ce soit à nouveau son tour).
-    const myPlayer = state.players[myId];
-    const leftover = myPlayer ? (myPlayer.movesLeft || 0) : 0;
-    const bonus    = randomMoves();
-    const totalForMe = leftover + bonus;
-    updates[`players/${myId}/movesLeft`] = totalForMe;
-    announceCount = totalForMe;
+    const leftover   = activePlayerBefore ? (activePlayerBefore.movesLeft || 0) : 0;
+    const bonus      = randomMoves();
+    const totalForActive = leftover + bonus;
+    updates[`players/${activeId}/movesLeft`] = totalForActive;
+    if (activeId === myId) announceCount = totalForActive;
     logMsg = `🔄 Tour ${newTurn} — ${state.players[nextId].name} joue`;
   } else {
     const bonusMoves   = randomMoves();
@@ -1049,6 +1200,24 @@ async function advanceTurn(objectsSnapshot) {
   if (announceCount !== null) {
     announceNextMoves(announceCount);
   }
+}
+
+// ============================================================
+//  HÔTE : forcer le passage au joueur suivant en cas d'inactivité
+//  (disponible uniquement quand aucun temps limite par tour n'est configuré,
+//  puisque celui-ci gère déjà l'inactivité automatiquement).
+// ============================================================
+async function hostForceNextPlayer() {
+  if (!isHost()) return;
+  if (!gameState || gameState.status !== 'playing') return;
+  if (getSetting('turnTimeLimit', 0) > 0) return;
+
+  const activeId = gameState.currentPlayer;
+  const activePlayer = activeId ? gameState.players[activeId] : null;
+  if (!activeId || !activePlayer) return;
+
+  await pushLog(`⏭ ${activePlayer.name} a été passé au joueur suivant par l'hôte (inactivité).`);
+  await advanceTurn(gameState.objects, activeId);
 }
 
 // ============================================================
@@ -1145,8 +1314,9 @@ function handleGameFinished() {
 
     if (isHost() && rematchScheduledFor !== gameState.finishedAt) {
       rematchScheduledFor = gameState.finishedAt;
+      const rejoinWindowMs = getSetting('rejoinWindowMs', DEFAULT_REJOIN_WINDOW_MS);
       const elapsed   = Date.now() - gameState.finishedAt;
-      const remaining = Math.max(0, REMATCH_DELAY_MS - elapsed);
+      const remaining = Math.max(0, rejoinWindowMs - elapsed);
       const scheduledFor = gameState.finishedAt;
 
       setTimeout(() => {
@@ -1189,20 +1359,18 @@ function renderFinishedModalContent() {
           : `${winner.name} a gagné avec ${winner.score} objets !`)
       : '';
 
+    const rejoinWindowMs = getSetting('rejoinWindowMs', DEFAULT_REJOIN_WINDOW_MS);
     const elapsed   = Date.now() - (gameState.finishedAt || Date.now());
-    const remaining = Math.max(0, Math.ceil((REMATCH_DELAY_MS - elapsed) / 1000));
-    const totalPlayers = Object.keys(gameState.players || {}).length;
-    const threshold = Math.min(2, totalPlayers);
-    const thresholdTxt = threshold <= 1 ? 'vous votez "Oui"' : `${threshold} joueurs ou plus votent "Oui"`;
-    countdownEl.textContent = `Nouvelle partie possible encore ${remaining}s si ${thresholdTxt}.`;
+    const remaining = Math.max(0, Math.ceil((rejoinWindowMs - elapsed) / 1000));
+    countdownEl.textContent = `Retour à la salle d'attente dans ${remaining}s — votre choix sera visible des autres joueurs.`;
     countdownEl.style.display = 'block';
 
     const myVote = gameState.rematchVotes ? gameState.rematchVotes[myId] : undefined;
-    voteEl.style.display = 'flex';
+    voteEl.style.display = amSpectator ? 'none' : 'flex';
     voteEl.innerHTML = (myVote === undefined) ? `
-      <button onclick="castRematchVote(true)">✅ Oui, rejouer</button>
-      <button onclick="castRematchVote(false)">❌ Non merci</button>
-    ` : `<p>Vous avez voté "${myVote ? 'Oui' : 'Non'}". En attente des autres joueurs...</p>`;
+      <button onclick="castRematchVote(true)">✅ Rester / rejouer</button>
+      <button onclick="castRematchVote(false)">❌ Quitter la partie</button>
+    ` : `<p>Vous avez choisi de "${myVote ? 'rester' : 'quitter'}". En attente de la fin du décompte...</p>`;
     endedEl.style.display = 'none';
   }
 
@@ -1221,62 +1389,24 @@ async function castRematchVote(vote) {
   await roomRef.child(`rematchVotes/${myId}`).set(vote);
 }
 
+// Après le décompte de fin de partie, retour systématique à la salle d'attente :
+// chaque joueur y apparaît marqué "a accepté" ou "a quitté" selon son vote
+// (l'absence de vote compte comme "a quitté"). C'est ensuite l'hôte qui décide
+// quand relancer, depuis la salle d'attente (bouton "Démarrer la partie").
 async function resolveRematch() {
   const votes = gameState.rematchVotes || {};
-  const yesCount = Object.values(votes).filter(v => v === true).length;
-  const totalPlayers = Object.keys(gameState.players || {}).length;
-  const threshold = Math.min(2, totalPlayers); // 1 joueur seul → 1 "oui" suffit
-
-  if (yesCount >= threshold) {
-    await startNewRound();
-  } else {
-    await roomRef.update({ status: 'ended' });
-  }
-}
-
-async function startNewRound() {
-  const players = gameState.players;
-  const ids = Object.keys(players);
-
-  const shuffled = [...ids].sort(() => Math.random() - 0.5);
-  const firstId  = shuffled[0];
-  const preAssign = getSetting('preAssignMoves', true);
-
-  const resetPlayers = {};
-  ids.forEach(id => {
-    resetPlayers[id] = {
-      ...players[id],
-      x:         Math.floor(Math.random() * GRID_SIZE),
-      y:         Math.floor(Math.random() * GRID_SIZE),
-      direction: DIRECTIONS[Math.floor(Math.random() * 4)],
-      score:     0,
-      movesUsed: 0,
-      movesLeft: preAssign ? randomMoves() : ((id === firstId) ? randomMoves() : 0)
-    };
+  const players = gameState.players || {};
+  const rejoinStatus = {};
+  Object.keys(players).forEach(id => {
+    rejoinStatus[id] = (votes[id] === true) ? 'accepted' : 'left';
   });
 
-  const gameNumber = (gameState.gameNumber || 1) + 1;
-  const newObjects = generateObjects(currentInitObjects(), {});
-  const trapsEnabled = getSetting('trapsEnabled', false);
-  const trapCount     = getSetting('trapCount', DEFAULT_TRAP_COUNT);
-  const newTraps    = trapsEnabled ? generateTraps(trapCount, newObjects) : {};
-
-  const updates = {
-    status:        'playing',
-    turn:          1,
-    currentPlayer: firstId,
-    playerOrder:   shuffled,
-    players:       resetPlayers,
-    objects:       newObjects,
-    traps:         newTraps,
-    winner:        null,
-    rematchVotes:  {},
-    gameNumber:    gameNumber,
-    turnStartedAt: Date.now()
-  };
-
-  await roomRef.update(updates);
-  await pushLog(`🔁 Nouvelle partie (partie n°${gameNumber}) — ${resetPlayers[firstId].name} commence`);
+  await roomRef.update({
+    status:       'waiting',
+    rejoinStatus: rejoinStatus,
+    rematchVotes: {}
+  });
+  await pushLog("🕓 Retour à la salle d'attente pour la prochaine partie.");
 }
 
 // ============================================================
@@ -1287,7 +1417,6 @@ function drawGrid() {
 
   const W = GRID_SIZE * CELL_SIZE;
   const H = GRID_SIZE * CELL_SIZE;
-  const movementMode = (gameState.settings && gameState.settings.movementMode) || 'relative';
 
   // Fond
   ctx.fillStyle = '#1a1a2e';
@@ -1373,8 +1502,8 @@ function drawGrid() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Flèche de direction (masquée en mode absolu)
-    if (movementMode !== 'absolute') {
+    // Flèche de direction (masquée en mode absolu — propre à chaque joueur)
+    if (effectiveMovementMode(p) !== 'absolute') {
       drawDirectionArrow(ctx, cx, cy, displayDir, color);
     }
 
@@ -1419,6 +1548,100 @@ function drawDirectionArrow(ctx, cx, cy, dir, color) {
 }
 
 // ============================================================
+//  PANNEAU DE L'HÔTE — réglages en direct + suivi d'activité des joueurs
+// ============================================================
+const HOST_SETTING_LABELS = {
+  modeLocked:     'verrouillage du mode de déplacement',
+  movementMode:   'mode de déplacement imposé',
+  gameModePolicy: "politique d'interaction (direct/différé)",
+  ghostAllowed:   'aperçu fantôme autorisé',
+  turnTimeLimit:  'temps limite par tour',
+  rejoinWindowMs: 'durée pour rejoindre une nouvelle partie'
+};
+
+async function hostUpdateSetting(key, value) {
+  if (!isHost()) return;
+  await roomRef.update({ [`settings/${key}`]: value });
+  await pushLog(`⚙️ L'hôte a modifié : ${HOST_SETTING_LABELS[key] || key}.`);
+}
+
+function toggleHostPanel() {
+  const body = document.getElementById('host-panel-body');
+  const btn  = document.getElementById('btn-toggle-host-panel');
+  if (!body || !btn) return;
+  const show = body.style.display === 'none';
+  body.style.display = show ? 'block' : 'none';
+  btn.textContent = show ? 'Masquer' : 'Afficher';
+}
+
+// N'écrase la valeur d'un champ que si l'hôte n'est pas en train de le modifier
+// (évite de couper l'utilisateur en pleine saisie lors d'un rafraîchissement).
+function setIfNotFocused(id, value, prop) {
+  const el = document.getElementById(id);
+  if (!el || document.activeElement === el) return;
+  if (prop) el[prop] = value; else el.value = value;
+}
+
+function renderHostPanel() {
+  const panel = document.getElementById('host-panel');
+  if (!panel) return;
+
+  if (!isHost() || !gameState || gameState.status !== 'playing') {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+
+  const settings = gameState.settings || {};
+  setIfNotFocused('host-mode-locked', !!settings.modeLocked, 'checked');
+  const lockedRow = document.getElementById('host-locked-mode-row');
+  if (lockedRow) lockedRow.style.display = settings.modeLocked ? 'block' : 'none';
+  setIfNotFocused('host-movement-mode', settings.movementMode || 'relative');
+  setIfNotFocused('host-game-mode-policy', settings.gameModePolicy || 'free');
+  setIfNotFocused('host-ghost-allowed', settings.ghostAllowed !== false, 'checked');
+  setIfNotFocused('host-turn-time-limit', settings.turnTimeLimit || 0);
+  setIfNotFocused('host-rejoin-window', Math.round((settings.rejoinWindowMs || DEFAULT_REJOIN_WINDOW_MS) / 1000));
+
+  renderHostActivityList();
+}
+
+function formatDuration(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function renderHostActivityList() {
+  const list = document.getElementById('host-activity-list');
+  const hint = document.getElementById('host-skip-hint');
+  if (!list || !gameState) return;
+
+  const players  = gameState.players || {};
+  const activeId = gameState.currentPlayer;
+  const now      = Date.now();
+  const turnStartedAt = gameState.turnStartedAt || now;
+  const noTimeLimit = !(gameState.settings && gameState.settings.turnTimeLimit > 0);
+
+  list.innerHTML = Object.entries(players).map(([id, p]) => {
+    const isActive  = id === activeId;
+    const totalMs   = (p.totalActiveMs || 0) + (isActive ? (now - turnStartedAt) : 0);
+    const turnTxt   = isActive ? `🎯 tour en cours : ${formatDuration(now - turnStartedAt)}` : '';
+    const skipBtn   = (isActive && noTimeLimit)
+      ? `<button class="small-btn" onclick="hostForceNextPlayer()" title="Forcer le passage au joueur suivant">⏭ Suivant</button>`
+      : '';
+    return `<div class="activity-row${isActive ? ' activity-active' : ''}">
+      <span>${isActive ? '🎮 ' : ''}${p.name}</span>
+      <span>⏱ total ${formatDuration(totalMs)}</span>
+      <span>${turnTxt}</span>
+      ${skipBtn}
+    </div>`;
+  }).join('');
+
+  if (hint) hint.style.display = noTimeLimit ? 'block' : 'none';
+}
+
+// ============================================================
 //  MISE À JOUR DE L'INTERFACE
 // ============================================================
 function updateUI() {
@@ -1431,6 +1654,7 @@ function updateUI() {
   updateControlPad();
   syncMovementModeSelect();
   applyGameModePolicy();
+  renderHostPanel();
 
   document.getElementById('win-score-display').textContent = currentWinScore();
 
