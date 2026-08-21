@@ -467,6 +467,87 @@ body {
 }
 .log-entry { padding: 2px 0; border-bottom: 1px solid #222; }
 
+/* Panneau de l'hôte (réglages en direct + activité des joueurs) */
+#host-panel h3 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+#btn-toggle-host-panel {
+  width: auto;
+  background: #333;
+  color: #ccc;
+  border: none;
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  margin-top: 0;
+}
+#btn-toggle-host-panel:hover { background: #e94560; color: #fff; }
+
+.host-section {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #222;
+}
+.host-section:last-child { border-bottom: none; margin-bottom: 0; }
+.host-section h4 {
+  font-size: 0.78rem;
+  color: #e94560;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+/* Le panneau hôte est étroit (panel-left) : label au-dessus du champ,
+   plutôt que côte à côte comme dans le formulaire de création (plus large). */
+.host-section .settings-row label {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.host-section .settings-row label:has(input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+}
+.host-section .settings-row select,
+.host-section .settings-row input[type="number"] {
+  width: 100%;
+}
+
+.activity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 0.76rem;
+  color: #ccc;
+  background: rgba(255,255,255,0.04);
+  flex-wrap: wrap;
+}
+.activity-row.activity-active {
+  background: rgba(233,69,96,0.18);
+  border-left: 3px solid #e94560;
+}
+.activity-row button {
+  width: auto;
+  margin-top: 0;
+  padding: 3px 8px;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 1px 7px;
+  border-radius: 10px;
+  margin-left: 6px;
+}
+.badge-accepted { background: rgba(76,175,80,0.25); color: #8bd88f; }
+.badge-left     { background: rgba(233,69,96,0.25); color: #f28b9a; }
+
 /* ===== ZONE CENTRALE : plateau + colonne latérale ===== */
 #center-row {
   display: flex;
