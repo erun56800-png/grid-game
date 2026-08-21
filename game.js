@@ -73,6 +73,12 @@ let myHostToken     = null;  // jeton local prouvant le statut d'hôte (indépen
 let hostTokenParam   = null; // jeton lu dans l'URL (?host=...) avant vérification
 let hostActivityInterval = null;
 
+// ── Chat ──
+let mySessionId    = 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+let chatLastSeenTs = null;   // null = pas encore initialisé (pas d'alerte pour l'historique existant)
+let chatUnreadCount = 0;
+let chatFlashTimeoutId = null;
+
 // ── Mode différé ──
 let gameMode         = 'direct';  // 'direct' | 'deferred'
 let commandQueue      = [];        // actions en attente (mode différé)
@@ -338,7 +344,10 @@ async function enterAsSpectator() {
 function startHostActivityTicker() {
   clearInterval(hostActivityInterval);
   hostActivityInterval = setInterval(() => {
-    if (gameState && gameState.status === 'playing' && isHost()) renderHostActivityList();
+    if (gameState && gameState.status === 'playing' && isHost()) {
+      renderHostActivityList();
+      renderHostQuickBar();
+    }
   }, 1000);
 }
 
@@ -1641,6 +1650,35 @@ function renderHostActivityList() {
   if (hint) hint.style.display = noTimeLimit ? 'block' : 'none';
 }
 
+// Barre rapide toujours visible pour l'hôte (au-dessus du plateau), pour ne pas
+// avoir à ouvrir le panneau replié pour voir le temps ou passer au joueur suivant.
+function renderHostQuickBar() {
+  const bar = document.getElementById('host-quick-bar');
+  if (!bar) return;
+
+  if (!isHost() || !gameState || gameState.status !== 'playing') {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+
+  const activeId = gameState.currentPlayer;
+  const activePlayer = activeId ? gameState.players[activeId] : null;
+  const turnStartedAt = gameState.turnStartedAt || Date.now();
+  const elapsed = Date.now() - turnStartedAt;
+
+  const timerEl = document.getElementById('host-quick-turn-timer');
+  if (timerEl) {
+    timerEl.textContent = activePlayer
+      ? `⏱ ${activePlayer.name} joue depuis ${formatDuration(elapsed)}`
+      : '⏱ -';
+  }
+
+  const noTimeLimit = !(gameState.settings && gameState.settings.turnTimeLimit > 0);
+  const skipBtn = document.getElementById('host-quick-skip-btn');
+  if (skipBtn) skipBtn.style.display = noTimeLimit ? 'inline-block' : 'none';
+}
+
 // ============================================================
 //  MISE À JOUR DE L'INTERFACE
 // ============================================================
@@ -1655,6 +1693,8 @@ function updateUI() {
   syncMovementModeSelect();
   applyGameModePolicy();
   renderHostPanel();
+  renderHostQuickBar();
+  renderChat();
 
   document.getElementById('win-score-display').textContent = currentWinScore();
 
@@ -1744,6 +1784,88 @@ function updateLog() {
 }
 
 // ============================================================
+//  CHAT DE LA SALLE (visible de tous, joueurs et spectateurs)
+//  Stocké dans rooms/{code}/chat, synchronisé via le même listener que
+//  le reste de l'état de la salle — pas besoin d'un canal séparé.
+// ============================================================
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  if (!input || !roomRef) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+
+  const senderName = amSpectator ? (myName || '👁 Spectateur') : (myName || '?');
+  await roomRef.child('chat').push({
+    senderName,
+    senderSessionId: mySessionId,
+    msg:  text.slice(0, 200),
+    ts:   Date.now(),
+    isSpectator: !!amSpectator
+  });
+}
+
+function renderChat() {
+  if (!gameState) return;
+  const chatData = gameState.chat || {};
+  const entries = Object.values(chatData).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+  if (chatLastSeenTs === null) {
+    // Premier rendu après connexion : pas d'alerte rétroactive sur l'historique existant.
+    chatLastSeenTs = entries.length ? entries[entries.length - 1].ts : 0;
+  } else {
+    const newOnes = entries.filter(e => e.ts > chatLastSeenTs && e.senderSessionId !== mySessionId);
+    if (newOnes.length > 0) notifyNewChatMessages(newOnes.length);
+    if (entries.length) chatLastSeenTs = Math.max(chatLastSeenTs, entries[entries.length - 1].ts);
+  }
+
+  const list = document.getElementById('chat-messages');
+  if (list) {
+    list.innerHTML = entries.slice(-50).map(e => {
+      const who = e.isSpectator ? `👁 ${e.senderName}` : e.senderName;
+      return `<div class="chat-msg"><span class="chat-msg-name">${escapeHtml(who)}</span>${escapeHtml(e.msg)}</div>`;
+    }).join('');
+    list.scrollTop = list.scrollHeight;
+  }
+}
+
+function notifyNewChatMessages(count) {
+  playChatSound();
+
+  const panel = document.getElementById('chat-panel');
+  if (panel) {
+    panel.classList.add('chat-flash');
+    clearTimeout(chatFlashTimeoutId);
+    chatFlashTimeoutId = setTimeout(() => panel.classList.remove('chat-flash'), 1600);
+  }
+
+  chatUnreadCount += count;
+  updateChatBadge();
+}
+
+function updateChatBadge() {
+  const badge = document.getElementById('chat-unread-badge');
+  if (!badge) return;
+  if (chatUnreadCount > 0) {
+    badge.textContent = String(chatUnreadCount);
+    badge.style.display = 'inline-block';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function markChatRead() {
+  chatUnreadCount = 0;
+  updateChatBadge();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ============================================================
 //  SIGNAUX SONORES ET VISUELS
 // ============================================================
 function playTurnSound() {
@@ -1780,6 +1902,33 @@ function playTickSound() {
     osc.start();
     osc.stop(audioCtx.currentTime + 0.15);
   } catch (e) { /* ignore */ }
+}
+
+// Petit "ding-dong" à deux notes, volontairement distinct des bips de tour,
+// pour signaler un nouveau message de chat.
+function playChatSound() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const beep = (freq, delay) => {
+      setTimeout(() => {
+        try {
+          const osc  = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.2);
+        } catch (e) { /* ignore */ }
+      }, delay);
+    };
+    beep(660, 0);
+    beep(880, 120);
+  } catch (e) { /* lecture audio bloquée : on ignore silencieusement */ }
 }
 
 function flashTurnAlert() {

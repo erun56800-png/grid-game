@@ -707,6 +707,109 @@ body {
 #rules-list { font-size: 0.82rem; color: #bbb; padding-left: 16px; }
 #rules-list li { margin-bottom: 6px; }
 
+/* ===== BARRE RAPIDE HÔTE (toujours visible pendant la partie) ===== */
+#host-quick-bar {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 14px;
+  background: linear-gradient(90deg, #ffb300, #e94560);
+  color: #1a1a2e;
+  font-weight: 600;
+  font-size: 0.88rem;
+  text-align: center;
+}
+#host-quick-bar button {
+  width: auto;
+  margin-top: 0;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #1a1a2e;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+#host-quick-bar button:hover { background: #e94560; }
+
+/* ===== CHAT ===== */
+#chat-panel {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #333;
+}
+#chat-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-badge {
+  background: #e94560;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 0.68rem;
+  font-weight: bold;
+  padding: 1px 6px;
+  border-bottom: none;
+}
+#chat-panel.chat-flash {
+  animation: chat-flash-pulse 0.5s ease-in-out 3;
+}
+@keyframes chat-flash-pulse {
+  0%, 100% { background: transparent; }
+  50% { background: rgba(233,69,96,0.35); }
+}
+#chat-messages {
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 0.78rem;
+  color: #ddd;
+  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chat-msg {
+  background: rgba(255,255,255,0.05);
+  border-radius: 6px;
+  padding: 4px 7px;
+  word-break: break-word;
+}
+.chat-msg-name {
+  color: #4CAF50;
+  font-weight: bold;
+  margin-right: 4px;
+}
+#chat-input-row {
+  display: flex;
+  gap: 6px;
+}
+#chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #222;
+  color: #fff;
+  font-size: 0.8rem;
+}
+#chat-input-row button {
+  width: auto;
+  margin-top: 0;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #e94560, #0f3460);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+#chat-input-row button:hover { opacity: 0.85; }
+
 /* ===== SPINNER ===== */
 .spinner {
   width: 30px; height: 30px;
