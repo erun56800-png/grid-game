@@ -587,6 +587,15 @@ body {
   margin-top: 0;
   padding: 3px 8px;
 }
+.auto-skip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.72rem;
+  color: #ccc;
+  cursor: pointer;
+  white-space: nowrap;
+}
 
 .badge {
   display: inline-block;
@@ -784,6 +793,13 @@ body {
   cursor: pointer;
 }
 #host-quick-bar button:hover { background: #e94560; }
+.host-quick-autoskip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
 
 /* ===== CHAT ===== */
 #chat-panel {

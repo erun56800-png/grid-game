@@ -128,6 +128,16 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const hostActivityList = document.getElementById('host-activity-list');
+  if (hostActivityList) {
+    hostActivityList.addEventListener('change', (e) => {
+      const cb = e.target.closest('.auto-skip-checkbox');
+      if (!cb) return;
+      const playerId = cb.dataset.playerId;
+      if (playerId) hostSetAutoSkip(playerId, cb.checked);
+    });
+  }
+
   const params = new URLSearchParams(location.search);
   const roomParam = params.get('room');
   const nameParam  = params.get('name');
@@ -677,6 +687,8 @@ function createPlayer(name, colorIndex, movementMode) {
     movesUsed:    0,
     movementMode: movementMode || 'relative',
     totalActiveMs: 0,
+    turnScoreGained: 0, // objets ramassés depuis le début du tour en cours (mode direct)
+    autoSkip:     false, // si vrai, ce joueur passe automatiquement son tour à chaque fois
     online:       true
   };
 }
@@ -860,7 +872,9 @@ async function startRound() {
   if (ids.length === 0) return;
 
   const shuffled  = [...ids].sort(() => Math.random() - 0.5);
-  const firstId   = shuffled[0];
+  // Ne démarre pas sur un joueur qui a coché "passer automatiquement", sauf
+  // si tout le monde l'a coché (il faut bien que quelqu'un commence).
+  const firstId   = shuffled.find(id => !players[id].autoSkip) || shuffled[0];
   const preAssign = getSetting('preAssignMoves', true);
   const modeLocked  = getSetting('modeLocked', false);
   const imposedMode = getSetting('movementMode', 'relative');
@@ -876,6 +890,7 @@ async function startRound() {
       movesUsed:     0,
       movesLeft:     0,
       totalActiveMs: 0,
+      turnScoreGained: 0,
       movementMode:  modeLocked ? imposedMode : (players[id].movementMode || imposedMode)
     };
   });
@@ -1041,8 +1056,12 @@ async function playerActionDirect(action) {
   if (action === 'pickup') {
     const key = `${player.x}_${player.y}`;
     if (gameState.objects[key]) {
-      const newScore = (player.score || 0) + 1;
-      const updates  = { [`players/${myId}/score`]: newScore };
+      const newScore      = (player.score || 0) + 1;
+      const newTurnGained = (player.turnScoreGained || 0) + 1;
+      const updates = {
+        [`players/${myId}/score`]:           newScore,
+        [`players/${myId}/turnScoreGained`]: newTurnGained
+      };
       updates[`objects/${key}`] = null;
 
       await roomRef.update(updates);
@@ -1064,17 +1083,30 @@ async function playerActionDirect(action) {
 
   const { state } = simulateQueue(player, gameState.objects, [action], gameState.traps);
 
-  const logMsg = state.trapped
-    ? `💥 ${player.name} tombe dans un piège et reste bloqué ! Fin de son tour.`
-    : describeAction(action, player.name, state.direction);
-
-  await roomRef.update({
+  const updates = {
     [`players/${myId}/x`]:         state.x,
     [`players/${myId}/y`]:         state.y,
     [`players/${myId}/direction`]: state.direction,
     [`players/${myId}/movesLeft`]: state.movesLeft,
     [`players/${myId}/movesUsed`]: (player.movesUsed || 0) + 1
-  });
+  };
+
+  let logMsg;
+  if (state.trapped) {
+    // Un piège fait perdre tous les objets ramassés depuis le début du tour
+    // (pas le score acquis avant ce tour).
+    const lostStars = player.turnScoreGained || 0;
+    if (lostStars > 0) {
+      updates[`players/${myId}/score`] = Math.max(0, (player.score || 0) - lostStars);
+    }
+    updates[`players/${myId}/turnScoreGained`] = 0;
+    logMsg = `💥 ${player.name} tombe dans un piège et reste bloqué ! Fin de son tour.` +
+      (lostStars > 0 ? ` ${lostStars} objet(s) ramassé(s) ce tour sont repris.` : '');
+  } else {
+    logMsg = describeAction(action, player.name, state.direction);
+  }
+
+  await roomRef.update(updates);
   if (logMsg) await pushLog(logMsg);
 
   if (state.trapped) {
@@ -1166,6 +1198,13 @@ function simulateQueue(basePlayer, baseObjects, queue, traps) {
         break;
       }
     }
+  }
+
+  // Un piège fait perdre tous les objets ramassés depuis le début de CE tour
+  // (pas les objets déjà en score avant le tour) : le score revient à sa
+  // valeur de départ. Les objets ramassés restent retirés du plateau.
+  if (state.trapped) {
+    state.score = basePlayer.score || 0;
   }
 
   return { state, objects, pickedKeys, movesUsed };
@@ -1317,12 +1356,15 @@ async function endTurnDeferred() {
   await roomRef.update(playerUpdates);
 
   if (finalState.trapped) {
-    await pushLog(`💥 ${player.name} tombe dans un piège pendant l'exécution de son tour ! Déplacements restants annulés.`);
-  } else if (commandQueue.length > 0) {
-    await pushLog(`📝 ${player.name} exécute ${commandQueue.length} commande(s) (mode différé)`);
-  }
-  if (pickedKeys.length > 0) {
-    await pushLog(`⭐ ${player.name} ramasse ${pickedKeys.length} objet(s) ! Score : ${finalState.score}`);
+    const lostMsg = pickedKeys.length > 0 ? ` ${pickedKeys.length} objet(s) ramassé(s) ce tour sont repris.` : '';
+    await pushLog(`💥 ${player.name} tombe dans un piège pendant l'exécution de son tour ! Déplacements restants annulés.${lostMsg}`);
+  } else {
+    if (commandQueue.length > 0) {
+      await pushLog(`📝 ${player.name} exécute ${commandQueue.length} commande(s) (mode différé)`);
+    }
+    if (pickedKeys.length > 0) {
+      await pushLog(`⭐ ${player.name} ramasse ${pickedKeys.length} objet(s) ! Score : ${finalState.score}`);
+    }
   }
 
   commandQueue = [];
@@ -1344,8 +1386,22 @@ async function advanceTurn(objectsSnapshot, finishingId) {
   const activeId    = finishingId || myId;
   const playerOrder = state.playerOrder || Object.keys(state.players);
   const currentIdx  = playerOrder.indexOf(activeId);
-  const nextIdx     = (currentIdx + 1) % playerOrder.length;
-  const nextId      = playerOrder[nextIdx];
+
+  // Saute automatiquement les joueurs ayant coché "passer automatiquement",
+  // sans jamais boucler indéfiniment si tout le monde l'a coché.
+  let nextIdx = (currentIdx + 1) % playerOrder.length;
+  const autoSkippedIds = [];
+  let loops = 0;
+  while (
+    loops < playerOrder.length - 1 &&
+    state.players[playerOrder[nextIdx]] &&
+    state.players[playerOrder[nextIdx]].autoSkip === true
+  ) {
+    autoSkippedIds.push(playerOrder[nextIdx]);
+    nextIdx = (nextIdx + 1) % playerOrder.length;
+    loops++;
+  }
+  const nextId = playerOrder[nextIdx];
 
   const currentObjectsCount = Object.keys(objectsSnapshot || {}).length;
   const missing             = currentInitObjects() - currentObjectsCount;
@@ -1367,7 +1423,8 @@ async function advanceTurn(objectsSnapshot, finishingId) {
     turn:          newTurn,
     objects:       newObjects,
     turnStartedAt: Date.now(),
-    [`players/${activeId}/totalActiveMs`]: (activePlayerBefore ? (activePlayerBefore.totalActiveMs || 0) : 0) + elapsedForActive
+    [`players/${activeId}/totalActiveMs`]: (activePlayerBefore ? (activePlayerBefore.totalActiveMs || 0) : 0) + elapsedForActive,
+    [`players/${nextId}/turnScoreGained`]: 0
   };
 
   // Mode de déplacement imposé par l'hôte : appliqué au joueur suivant dès
@@ -1398,6 +1455,11 @@ async function advanceTurn(objectsSnapshot, finishingId) {
   }
 
   await roomRef.update(updates);
+
+  if (autoSkippedIds.length > 0) {
+    const names = autoSkippedIds.map(id => (state.players[id] && state.players[id].name) || id).join(', ');
+    await pushLog(`⏭ Passage automatique du tour pour : ${names}.`);
+  }
   await pushLog(logMsg);
 
   if (announceCount !== null) {
@@ -1421,6 +1483,16 @@ async function hostForceNextPlayer() {
 
   await pushLog(`⏭ ${activePlayer.name} a été passé au joueur suivant par l'hôte (inactivité).`);
   await advanceTurn(gameState.objects, activeId);
+}
+
+// Coché : ce joueur est sauté automatiquement à chaque tour tant que la case
+// reste cochée (contrairement à hostForceNextPlayer, qui ne saute qu'une
+// fois, ponctuellement). Ses déplacements accumulés ne sont jamais touchés.
+async function hostSetAutoSkip(playerId, checked) {
+  if (!isHost() || !roomRef || !gameState) return;
+  const p = gameState.players ? gameState.players[playerId] : null;
+  await roomRef.update({ [`players/${playerId}/autoSkip`]: !!checked });
+  await pushLog(`⏭ Passage automatique du tour ${checked ? 'activé' : 'désactivé'} pour ${p ? p.name : playerId}.`);
 }
 
 // ============================================================
@@ -1831,12 +1903,17 @@ function renderHostActivityList() {
     const totalMs   = (p.totalActiveMs || 0) + (isActive ? (now - turnStartedAt) : 0);
     const turnTxt   = isActive ? `🎯 tour en cours : ${formatDuration(now - turnStartedAt)}` : '';
     const skipBtn   = (isActive && noTimeLimit)
-      ? `<button class="small-btn" onclick="hostForceNextPlayer()" title="Forcer le passage au joueur suivant">⏭ Suivant</button>`
+      ? `<button class="small-btn" onclick="hostForceNextPlayer()" title="Forcer le passage au joueur suivant (ponctuel)">⏭ Suivant</button>`
       : '';
+    // L'id du joueur est toujours un identifiant "player_slug" (voir
+    // slugifyName) : sûr à interpoler tel quel dans un attribut HTML.
     return `<div class="activity-row${isActive ? ' activity-active' : ''}">
       <span>${isActive ? '🎮 ' : ''}${p.name}</span>
       <span>⏱ total ${formatDuration(totalMs)}</span>
       <span>${turnTxt}</span>
+      <label class="auto-skip-toggle" title="Passer automatiquement ce joueur à chaque tour">
+        <input type="checkbox" class="auto-skip-checkbox" data-player-id="${id}"${p.autoSkip ? ' checked' : ''}> auto
+      </label>
       ${skipBtn}
     </div>`;
   }).join('');
@@ -1871,6 +1948,18 @@ function renderHostQuickBar() {
   const noTimeLimit = !(gameState.settings && gameState.settings.turnTimeLimit > 0);
   const skipBtn = document.getElementById('host-quick-skip-btn');
   if (skipBtn) skipBtn.style.display = noTimeLimit ? 'inline-block' : 'none';
+
+  const autoSkipCb = document.getElementById('host-quick-autoskip-checkbox');
+  if (autoSkipCb && document.activeElement !== autoSkipCb) {
+    autoSkipCb.checked = !!(activePlayer && activePlayer.autoSkip);
+  }
+}
+
+// Coche/décoche "Passer auto" pour le joueur actuellement actif, depuis la
+// barre rapide (raccourci vers hostSetAutoSkip, sans ouvrir le panneau).
+function hostQuickAutoSkipChanged(checked) {
+  if (!gameState || !gameState.currentPlayer) return;
+  hostSetAutoSkip(gameState.currentPlayer, checked);
 }
 
 // ============================================================
@@ -1949,7 +2038,7 @@ function updatePlayersBar() {
         ${isActive ? '<div class="gamepad-icon">🎮</div>' : ''}
         <div class="chip-avatar" style="background:${color}">${p.name[0].toUpperCase()}</div>
         <div>
-          <div class="chip-name">${p.name}${isMe ? ' (vous)' : ''}${isOffline ? ' 💤' : ''}</div>
+          <div class="chip-name">${p.name}${isMe ? ' (vous)' : ''}${isOffline ? ' 💤' : ''}${p.autoSkip ? ' ⏭' : ''}</div>
           <div class="chip-stats">⭐ ${p.score || 0} · 👣 ${p.movesLeft || 0}</div>
         </div>
       </div>`;
