@@ -24,6 +24,8 @@ const DEFAULT_TRAP_COUNT = 10;   // nombre de cases pièges par défaut
 const DIRECTIONS       = ['N', 'E', 'S', 'W'];
 const DIR_VECTORS      = { N:[0,-1], E:[1,0], S:[0,1], W:[-1,0] };
 const DEFAULT_REJOIN_WINDOW_MS = 120000; // 2 min par défaut pour rejoindre une nouvelle partie
+const PRESENCE_HEARTBEAT_MS    = 10000;  // fréquence du battement de cœur de présence
+const PRESENCE_STALE_MS        = 15000;  // au-delà, un "online: true" est considéré périmé
 
 // Couleurs joueurs
 const PLAYER_COLORS  = ['#4CAF50','#2196F3','#FF5722','#9C27B0',
@@ -72,6 +74,7 @@ let canvas, ctx;
 let myHostToken     = null;  // jeton local prouvant le statut d'hôte (indépendant du pseudo)
 let hostTokenParam   = null; // jeton lu dans l'URL (?host=...) avant vérification
 let hostActivityInterval = null;
+let presenceHeartbeatInterval = null;
 
 // ── Chat ──
 let mySessionId    = 'sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -212,7 +215,15 @@ async function proceedFromLogin() {
     const candidateId = playerIdFor(myName);
     const existingPlayer = (state.players || {})[candidateId];
 
-    if (existingPlayer && existingPlayer.online === true) {
+    // "online" est mis à jour via onDisconnect() côté Firebase, qui a un
+    // délai de détection (parfois jusqu'à une minute) : après une fermeture
+    // involontaire d'onglet, ce champ peut rester "true" un moment alors que
+    // plus personne n'est réellement connecté. On ne bloque donc que si un
+    // battement de cœur récent confirme qu'un autre onglet est VRAIMENT actif.
+    const heartbeatIsFresh = existingPlayer &&
+      (Date.now() - (existingPlayer.lastSeenAt || 0)) < PRESENCE_STALE_MS;
+
+    if (existingPlayer && existingPlayer.online === true && heartbeatIsFresh) {
       errEl.textContent = "Ce joueur est déjà dans la salle (fermez l'autre onglet ou choisissez un autre pseudo).";
       return;
     }
@@ -315,14 +326,24 @@ async function joinExistingRoom(state, candidateId, existingPlayer) {
 
 function setupPresence() {
   if (!myId) return; // spectateur : pas de fiche joueur à suivre
-  const myOnlineRef = roomRef.child('players/' + myId + '/online');
+  const myPlayerRef  = roomRef.child('players/' + myId);
+  const myOnlineRef  = myPlayerRef.child('online');
   const connectedRef = db.ref('.info/connected');
   connectedRef.on('value', (snap) => {
     if (snap.val() === true) {
       myOnlineRef.onDisconnect().set(false);
       myOnlineRef.set(true);
+      myPlayerRef.child('lastSeenAt').set(Date.now());
     }
   });
+
+  // Battement de cœur régulier : permet de distinguer un "online: true"
+  // encore valide d'un indicateur périmé après une fermeture involontaire
+  // d'onglet (le onDisconnect de Firebase met du temps à se déclencher).
+  clearInterval(presenceHeartbeatInterval);
+  presenceHeartbeatInterval = setInterval(() => {
+    myPlayerRef.child('lastSeenAt').set(Date.now());
+  }, PRESENCE_HEARTBEAT_MS);
 }
 
 function enterGameScreen() {
