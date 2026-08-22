@@ -160,6 +160,9 @@
     <!-- BARRE RAPIDE HÔTE : toujours visible pendant la partie, sans passer par les réglages -->
     <div id="host-quick-bar" style="display:none">
       <span id="host-quick-turn-timer">⏱ -</span>
+      <label class="host-quick-autoskip">
+        <input type="checkbox" id="host-quick-autoskip-checkbox" onchange="hostQuickAutoSkipChanged(this.checked)"> Passer auto
+      </label>
       <button id="host-quick-skip-btn" onclick="hostForceNextPlayer()" style="display:none">⏭ Joueur suivant</button>
     </div>
 
