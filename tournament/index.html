@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tournoi — Chasseurs d'Étoiles</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="tournament.css">
+  <script src="../vendor/qrcode.js"></script>
+</head>
+<body>
+
+  <!-- ÉCRAN D'ACCUEIL TOURNOI -->
+  <div id="screen-t-login" class="screen active">
+    <div class="login-box">
+      <h1>🏆 Tournoi — Chasseurs d'Étoiles</h1>
+      <p>Jusqu'à 12 équipes, poules puis demies / finale / petite finale.</p>
+      <input type="text" id="t-team-name" placeholder="Nom de votre équipe" maxlength="16">
+      <input type="text" id="t-tournament-code" placeholder="Code du tournoi (ex: TOURNOI1)" maxlength="10">
+      <div class="settings-row spectator-row">
+        <label><input type="checkbox" id="t-spectator-checkbox"> 👁 Ne participe pas (organisateur / écran de projection)</label>
+      </div>
+      <button id="t-btn-join" onclick="proceedFromTLogin()">Rejoindre / Créer le tournoi</button>
+      <p class="hint-text"><a href="../index.html">← Retour au jeu simple (sans tournoi)</a></p>
+      <div id="t-login-error" class="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- ÉCRAN INSCRIPTION / LANCEMENT (avant le début du tournoi) -->
+  <div id="screen-t-lobby" class="screen">
+    <div class="login-box lobby-box">
+      <h1>🕓 Inscription — <span id="t-lobby-code"></span></h1>
+
+      <div class="settings-row invite-row">
+        <input type="text" id="t-lobby-invite-link" readonly>
+        <button onclick="copyTInviteLink()">🔗 Copier</button>
+      </div>
+      <div id="t-lobby-link-feedback"></div>
+
+      <p id="t-lobby-team-count"></p>
+      <ul id="t-lobby-team-list"></ul>
+
+      <div id="t-host-launch-panel" style="display:none">
+        <h3>⚙️ Format du tournoi</h3>
+
+        <div class="settings-row">
+          <label><input type="radio" name="t-format" value="shared" checked onchange="renderTLaunchEstimates()"> 🎲 Poule partagée (plusieurs équipes sur un même plateau)</label>
+        </div>
+        <div class="settings-row" id="t-shared-rounds-row">
+          <label>Manches par poule
+            <select id="t-pool-rounds" onchange="renderTLaunchEstimates()">
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <label><input type="radio" name="t-format" value="duels" onchange="renderTLaunchEstimates()"> ⚔️ Duels (face-à-face en poule)</label>
+        </div>
+
+        <div class="settings-row">
+          <label>Objectif étoiles en poule
+            <input type="number" id="t-pool-win-score" value="8" min="1" onchange="renderTLaunchEstimates()">
+          </label>
+        </div>
+        <p class="hint-text">Les demi-finales, la finale et la petite finale se jouent toujours à 20 étoiles.</p>
+
+        <div id="t-launch-estimate" class="host-section"></div>
+
+        <button id="t-btn-launch" onclick="launchTournament()">▶ Lancer le tournoi</button>
+      </div>
+      <div id="t-lobby-wait-msg" style="display:none">
+        <div class="spinner"></div>
+        <p>En attente que l'organisateur lance le tournoi...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ÉCRAN TABLEAU DE BORD (pendant / après le tournoi) -->
+  <div id="screen-t-dashboard" class="screen">
+    <div id="t-dash-body">
+
+      <div id="t-my-match-panel" style="display:none">
+        <h2 id="t-my-match-title"></h2>
+        <p id="t-my-match-status"></p>
+        <button id="t-btn-join-match" style="display:none" onclick="openMyCurrentMatch()">🎮 Rejoindre mon match (nouvel onglet)</button>
+      </div>
+
+      <div id="t-bracket">
+        <h2>🏆 <span id="t-dash-code"></span></h2>
+
+        <div id="t-pools-view"></div>
+
+        <div id="t-knockout-view" style="display:none">
+          <h3>🥇 Phase finale</h3>
+          <div id="t-knockout-list"></div>
+        </div>
+
+        <div id="t-final-standings" style="display:none">
+          <h3>🏆 Classement final</h3>
+          <ol id="t-final-standings-list"></ol>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="tournament-logic.js"></script>
+  <!-- Firebase SDK (même projet que le jeu principal) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+  <script src="tournament.js"></script>
+</body>
+</html>
