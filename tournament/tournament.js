@@ -80,54 +80,71 @@ async function proceedFromTLogin() {
   if (!tournamentCode) { errEl.textContent = 'Entrez un code de tournoi.'; return; }
   if (!amSpectator && !myTeamName) { errEl.textContent = "Entrez le nom de l'équipe."; return; }
 
-  tournamentRef = db.ref('tournaments/' + tournamentCode);
-  const snap = await tournamentRef.once('value');
+  const btn = document.getElementById('t-btn-join');
+  if (btn) btn.disabled = true;
 
-  if (snap.exists()) {
-    const state = snap.val();
+  try {
+    tournamentRef = db.ref('tournaments/' + tournamentCode);
+    const snap = await tournamentRef.once('value');
 
-    if (hostTokenParam && state.hostToken === hostTokenParam) {
-      myHostToken = hostTokenParam;
-    }
+    if (snap.exists()) {
+      const state = snap.val();
 
-    if (!amSpectator) {
-      myTeamId = teamIdFor(myTeamName);
-      const alreadyRegistered = state.teams && state.teams[myTeamId];
-      if (!alreadyRegistered) {
-        if (state.status !== 'registration') {
-          errEl.textContent = "Le tournoi a déjà commencé : impossible de s'inscrire maintenant.";
-          return;
-        }
-        await tournamentRef.child('teams/' + myTeamId).set({ name: myTeamName, checkedInAt: Date.now() });
+      if (hostTokenParam && state.hostToken === hostTokenParam) {
+        myHostToken = hostTokenParam;
       }
-    }
-  } else {
-    if (amSpectator) {
-      errEl.textContent = "Ce tournoi n'existe pas encore.";
-      return;
-    }
-    myHostToken = generateTHostToken();
-    myTeamId = teamIdFor(myTeamName);
-    await tournamentRef.set({
-      hostToken:  myHostToken,
-      createdAt:  Date.now(),
-      status:     'registration',
-      format:     'shared',
-      poolRounds: 3,
-      poolWinScore: 8,
-      finalWinScore: T_KNOCKOUT_WIN_SCORE_DEFAULT,
-      teams:      { [myTeamId]: { name: myTeamName, checkedInAt: Date.now() } },
-      pools:      {},
-      knockout:   {}
-    });
-  }
 
-  enterTournamentScreen();
+      if (!amSpectator) {
+        myTeamId = teamIdFor(myTeamName);
+        const alreadyRegistered = state.teams && state.teams[myTeamId];
+        if (!alreadyRegistered) {
+          if (state.status !== 'registration') {
+            errEl.textContent = "Le tournoi a déjà commencé : impossible de s'inscrire maintenant.";
+            return;
+          }
+          await tournamentRef.child('teams/' + myTeamId).set({ name: myTeamName, checkedInAt: Date.now() });
+        }
+      }
+    } else {
+      if (amSpectator) {
+        errEl.textContent = "Ce tournoi n'existe pas encore.";
+        return;
+      }
+      myHostToken = generateTHostToken();
+      myTeamId = teamIdFor(myTeamName);
+      await tournamentRef.set({
+        hostToken:  myHostToken,
+        createdAt:  Date.now(),
+        status:     'registration',
+        format:     'shared',
+        poolRounds: 3,
+        poolWinScore: 8,
+        finalWinScore: T_KNOCKOUT_WIN_SCORE_DEFAULT,
+        teams:      { [myTeamId]: { name: myTeamName, checkedInAt: Date.now() } },
+        pools:      {},
+        knockout:   {}
+      });
+    }
+
+    enterTournamentScreen();
+  } catch (e) {
+    console.error('Erreur proceedFromTLogin :', e);
+    errEl.textContent = (e && e.code === 'PERMISSION_DENIED')
+      ? "⛔ Accès à la base de données refusé. Il manque probablement une règle Firebase pour le nœud \"tournaments\" (voir la documentation)."
+      : "Erreur de connexion : " + (e && e.message ? e.message : e);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function enterTournamentScreen() {
   document.getElementById('screen-t-login').classList.remove('active');
-  tournamentRef.on('value', onTStateUpdate);
+  tournamentRef.on('value', onTStateUpdate, (err) => {
+    console.error('Erreur de suivi du tournoi :', err);
+    alert((err && err.code === 'PERMISSION_DENIED')
+      ? "⛔ Connexion au tournoi perdue : accès à la base de données refusé (règle Firebase manquante pour \"tournaments\")."
+      : "Connexion au tournoi perdue : " + (err && err.message ? err.message : err));
+  });
 
   clearInterval(hostAdvanceInterval);
   hostAdvanceInterval = setInterval(() => {
@@ -281,12 +298,22 @@ async function launchTournament() {
     }
   });
 
-  await tournamentRef.update({
-    status: 'playing',
-    format, poolRounds, poolWinScore,
-    pools: poolsData
-  });
-  await pushTLog(`🏆 Tournoi lancé — ${format === 'shared' ? 'Poule partagée' : 'Duels'}, ${teamIds.length} équipe(s), ${pools.length} poule(s).`);
+  const btn = document.getElementById('t-btn-launch');
+  if (btn) btn.disabled = true;
+  try {
+    await tournamentRef.update({
+      status: 'playing',
+      format, poolRounds, poolWinScore,
+      pools: poolsData
+    });
+    await pushTLog(`🏆 Tournoi lancé — ${format === 'shared' ? 'Poule partagée' : 'Duels'}, ${teamIds.length} équipe(s), ${pools.length} poule(s).`);
+  } catch (e) {
+    console.error('Erreur launchTournament :', e);
+    if (btn) btn.disabled = false;
+    alert((e && e.code === 'PERMISSION_DENIED')
+      ? "⛔ Accès à la base de données refusé. Il manque probablement une règle Firebase pour le nœud \"tournaments\" (voir la documentation)."
+      : "Erreur lors du lancement du tournoi : " + (e && e.message ? e.message : e));
+  }
 }
 
 // ============================================================
