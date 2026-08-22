@@ -80,7 +80,7 @@ let chatUnreadCount = 0;
 let chatFlashTimeoutId = null;
 
 // ── Mode différé ──
-let gameMode         = 'direct';  // 'direct' | 'deferred'
+let gameMode         = 'deferred'; // 'direct' | 'deferred' — différé par défaut
 let commandQueue      = [];        // actions en attente (mode différé)
 let previewOverride   = null;      // aperçu local {x,y,direction,objects}
 let showGhostPreview  = false;     // affichage du pion fantôme (désactivé par défaut)
@@ -109,7 +109,11 @@ firebase.initializeApp(firebaseConfig);
 db = firebase.database();
 
 // Pré-remplir le code de salle et/ou le pseudo depuis l'URL (?room=XXXX&name=YYY&host=TOKEN)
+// Un lien personnel de reconnexion (room+name) ou un lien hôte (room+host)
+// rejoint automatiquement la partie, sans clic supplémentaire sur "Rejoindre".
 window.addEventListener('DOMContentLoaded', () => {
+  setGameModeLocal(gameMode); // synchronise l'affichage (file de commandes) avec le mode par défaut
+
   const params = new URLSearchParams(location.search);
   const roomParam = params.get('room');
   const nameParam  = params.get('name');
@@ -117,6 +121,10 @@ window.addEventListener('DOMContentLoaded', () => {
   if (roomParam) document.getElementById('room-code').value = roomParam.toUpperCase();
   if (nameParam)  document.getElementById('player-name').value = nameParam;
   if (hostParam)  hostTokenParam = hostParam;
+
+  if (roomParam && (nameParam || hostParam)) {
+    proceedFromLogin();
+  }
 });
 
 // ============================================================
@@ -166,7 +174,6 @@ async function proceedFromLogin() {
   errEl.textContent = '';
 
   if (!roomCode) { errEl.textContent = 'Entrez un code de partie.'; return; }
-  if (!amSpectator && !myName) { errEl.textContent = 'Entrez votre pseudo.'; return; }
 
   const checkRef = db.ref('rooms/' + roomCode);
   const snap = await checkRef.once('value');
@@ -174,11 +181,28 @@ async function proceedFromLogin() {
   if (snap.exists()) {
     const state = snap.val();
 
-    // Lien de reconfiguration totale : le jeton dans l'URL donne le statut d'hôte
-    // quel que soit le pseudo choisi ou le statut spectateur.
+    // Lien de reconfiguration totale : le jeton dans l'URL redonne le statut
+    // d'hôte ET reconnecte automatiquement en tant qu'hôte d'origine (le
+    // joueur existant s'il en était un, ou en spectateur sinon) — sans
+    // redemander de pseudo, et sans jamais créer un nouveau joueur.
     if (hostTokenParam && state.settings && state.settings.hostToken === hostTokenParam) {
       myHostToken = hostTokenParam;
+
+      const hostPlayerId = state.settings.hostId;
+      const hostPlayer    = hostPlayerId ? (state.players || {})[hostPlayerId] : null;
+
+      if (hostPlayer) {
+        amSpectator = false;
+        myName = hostPlayer.name;
+        await joinExistingRoom(state, hostPlayerId, hostPlayer);
+      } else {
+        amSpectator = true;
+        await enterAsSpectator();
+      }
+      return;
     }
+
+    if (!amSpectator && !myName) { errEl.textContent = 'Entrez votre pseudo.'; return; }
 
     if (amSpectator) {
       await enterAsSpectator();
@@ -194,6 +218,7 @@ async function proceedFromLogin() {
     }
     await joinExistingRoom(state, candidateId, existingPlayer);
   } else {
+    if (!amSpectator && !myName) { errEl.textContent = 'Entrez votre pseudo.'; return; }
     // La salle n'existe pas encore : on peut la créer, y compris en restant spectateur
     // (l'hôte n'est alors pas un joueur actif — utile pour un affichage projeté en classe).
     document.getElementById('host-settings').style.display = 'block';
@@ -469,10 +494,18 @@ function renderQRCode(containerId, size) {
 function openQrModal() {
   document.getElementById('qrcode-room-label').textContent = `Salle : ${roomCode}`;
   renderQRCode('game-qrcode', 260);
+  const linkInput = document.getElementById('modal-qr-link');
+  if (linkInput) linkInput.value = getInviteLink();
   document.getElementById('modal-qrcode').style.display = 'flex';
 }
 function closeQrModal() {
   document.getElementById('modal-qrcode').style.display = 'none';
+}
+async function copyLinkFromQrModal() {
+  try {
+    await navigator.clipboard.writeText(getInviteLink());
+    showFeedbackIn('modal-qr-link-feedback', 'modal-qr-link-feedback', '✅ Lien copié !');
+  } catch (e) { window.prompt('Copiez ce lien :', getInviteLink()); }
 }
 
 // ============================================================
