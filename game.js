@@ -117,6 +117,17 @@ db = firebase.database();
 window.addEventListener('DOMContentLoaded', () => {
   setGameModeLocal(gameMode); // synchronise l'affichage (file de commandes) avec le mode par défaut
 
+  const historyList = document.getElementById('history-list');
+  if (historyList) {
+    historyList.addEventListener('click', (e) => {
+      const btn = e.target.closest('.history-join-btn');
+      if (!btn) return;
+      const entry = btn.closest('.history-room-entry');
+      const code = entry && entry.__roomCode;
+      if (code) joinRoomFromHistory(code);
+    });
+  }
+
   const params = new URLSearchParams(location.search);
   const roomParam = params.get('room');
   const nameParam  = params.get('name');
@@ -530,6 +541,106 @@ async function copyLinkFromQrModal() {
 }
 
 // ============================================================
+//  HISTORIQUE DES SALLES (écran de connexion)
+//  Liste toutes les salles déjà créées — jamais les pseudos des joueurs,
+//  seulement des informations agrégées (statut, nombre de joueurs, dates).
+// ============================================================
+let historyRoomsRef = null;
+
+const ROOM_STATUS_LABELS = {
+  waiting:  '🕓 En attente',
+  playing:  '🎮 En cours',
+  finished: '🏆 Partie terminée',
+  ended:    '⏹ Terminée'
+};
+
+function openHistoryScreen() {
+  document.getElementById('screen-login').classList.remove('active');
+  document.getElementById('screen-history').classList.add('active');
+
+  const list = document.getElementById('history-list');
+  if (list) list.innerHTML = '<p class="hint-text">Chargement…</p>';
+
+  historyRoomsRef = db.ref('rooms');
+  historyRoomsRef.on('value', renderRoomHistory, (err) => {
+    if (list) {
+      list.innerHTML = `<p class="qr-fallback-msg" style="max-width:none;color:#e94560">
+        ⚠️ Impossible de charger l'historique (accès refusé par les règles de sécurité Firebase ?).
+      </p>`;
+    }
+    console.warn("Historique des salles : erreur de lecture de 'rooms'.", err);
+  });
+}
+
+function closeHistoryScreen() {
+  if (historyRoomsRef) {
+    historyRoomsRef.off('value', renderRoomHistory);
+    historyRoomsRef = null;
+  }
+  document.getElementById('screen-history').classList.remove('active');
+  document.getElementById('screen-login').classList.add('active');
+}
+
+function renderRoomHistory(snap) {
+  const list = document.getElementById('history-list');
+  if (!list) return;
+
+  if (!snap.exists()) {
+    list.innerHTML = '<p class="hint-text">Aucune salle pour le moment.</p>';
+    return;
+  }
+
+  const rooms = [];
+  snap.forEach((child) => {
+    const room = child.val() || {};
+    const players = room.players || {};
+    const logEntries = Object.values(room.log || {});
+    const earliestLog = logEntries.reduce(
+      (min, e) => (e && e.ts && (!min || e.ts < min)) ? e.ts : min, null
+    );
+    rooms.push({
+      code:        child.key,
+      status:      room.status || 'waiting',
+      playerCount: Object.keys(players).length,
+      gamesPlayed: Object.keys(room.history || {}).length,
+      createdAt:   room.createdAt || earliestLog || null
+    });
+  });
+
+  rooms.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+  list.innerHTML = rooms.map((r, i) => {
+    const dateTxt = r.createdAt
+      ? new Date(r.createdAt).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : 'date inconnue';
+    const statusTxt = escapeHtml(ROOM_STATUS_LABELS[r.status] || r.status);
+    return `<div class="history-room-entry" data-index="${i}">
+      <div class="history-room-head">
+        <span class="history-room-code">${escapeHtml(r.code)}</span>
+        <span class="history-room-status">${statusTxt}</span>
+      </div>
+      <div class="history-room-meta">👥 ${r.playerCount} joueur(s) · 🔁 ${r.gamesPlayed} partie(s) jouée(s) · 🗓 ${dateTxt}</div>
+      <button class="small-btn history-join-btn" type="button">➡ Rejoindre cette salle</button>
+    </div>`;
+  }).join('');
+
+  // Le code de salle est un texte libre saisi par l'utilisateur : on l'attache
+  // comme propriété JS (jamais réinjecté dans du HTML) pour éviter tout souci
+  // d'échappement dans un attribut, plutôt que de l'interpoler dans l'attribut.
+  list.querySelectorAll('.history-room-entry').forEach((el) => {
+    const idx = Number(el.dataset.index);
+    el.__roomCode = rooms[idx] ? rooms[idx].code : null;
+  });
+}
+
+function joinRoomFromHistory(code) {
+  closeHistoryScreen();
+  document.getElementById('room-code').value = code;
+  const nameInput = document.getElementById('player-name');
+  if (nameInput) nameInput.focus();
+}
+
+// ============================================================
 //  CRÉATION D'ÉTAT INITIAL
 // ============================================================
 function createInitialState(settings) {
@@ -549,7 +660,8 @@ function createInitialState(settings) {
     settings:      settings,
     gameNumber:    1,
     history:       {},
-    rematchVotes:  {}
+    rematchVotes:  {},
+    createdAt:     Date.now()
   };
 }
 

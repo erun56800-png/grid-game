@@ -22,6 +22,7 @@
         <label><input type="checkbox" id="spectator-checkbox"> 👁 Ne participe pas au jeu (affichage sur écran/VPI)</label>
       </div>
       <button id="btn-join" onclick="proceedFromLogin()">Rejoindre / Créer une partie</button>
+      <button class="small-btn" onclick="openHistoryScreen()">📜 Historique des salles</button>
 
       <div id="host-settings" style="display:none">
         <h3>🎉 Nouvelle salle — configurons-la</h3>
@@ -93,6 +94,16 @@
       </div>
 
       <div id="login-error" class="error-msg"></div>
+    </div>
+  </div>
+
+  <!-- ÉCRAN HISTORIQUE DES SALLES -->
+  <div id="screen-history" class="screen">
+    <div class="login-box lobby-box">
+      <h1>📜 Historique des salles</h1>
+      <p class="hint-text">Salles déjà créées — sans les pseudos des joueurs.</p>
+      <div id="history-list"></div>
+      <button onclick="closeHistoryScreen()">← Retour</button>
     </div>
   </div>
 
