@@ -256,7 +256,19 @@ body {
   padding: 8px;
   border-radius: 8px;
 }
-#lobby-qrcode img { display: block; }
+#lobby-qrcode svg { display: block; }
+
+.qr-fallback-msg {
+  color: #333;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  max-width: 160px;
+  margin: 4px auto;
+}
+#lobby-qrcode.qr-unavailable,
+#game-qrcode.qr-unavailable {
+  padding: 14px;
+}
 
 .qrcode-big {
   display: inline-block;
