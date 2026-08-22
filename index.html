@@ -300,11 +300,11 @@
 
             <div id="mode-switch">
               <label class="mode-label">
-                <input type="radio" name="game-mode" value="direct" checked onchange="setGameMode('direct')">
+                <input type="radio" name="game-mode" value="direct" onchange="setGameMode('direct')">
                 ⚡ Mode direct
               </label>
               <label class="mode-label">
-                <input type="radio" name="game-mode" value="deferred" onchange="setGameMode('deferred')">
+                <input type="radio" name="game-mode" value="deferred" checked onchange="setGameMode('deferred')">
                 📝 Mode différé
               </label>
             </div>
@@ -387,6 +387,11 @@
       <h1>📱 Rejoindre la salle</h1>
       <p id="qrcode-room-label"></p>
       <div id="game-qrcode" class="qrcode-big"></div>
+      <div class="settings-row invite-row">
+        <input type="text" id="modal-qr-link" readonly>
+        <button onclick="copyLinkFromQrModal()">🔗 Copier</button>
+      </div>
+      <div id="modal-qr-link-feedback" class="link-feedback"></div>
       <button onclick="closeQrModal()">Fermer</button>
     </div>
   </div>
