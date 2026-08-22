@@ -427,15 +427,43 @@ function showFeedbackIn(primaryId, secondaryId, msg) {
 // ============================================================
 function renderQRCode(containerId, size) {
   const container = document.getElementById(containerId);
-  if (!container || typeof QRCode === 'undefined') return;
+  if (!container) return;
   container.innerHTML = '';
-  new QRCode(container, {
-    text: getInviteLink(),
-    width: size || 160,
-    height: size || 160,
-    colorDark: '#000000',
-    colorLight: '#ffffff'
-  });
+
+  if (typeof qrcode === 'undefined') {
+    // La bibliothèque QR (vendor/qrcode.js) n'a pas pu se charger — fichier
+    // manquant, chemin cassé, etc. On l'affiche clairement au lieu de
+    // laisser un carré blanc muet.
+    container.classList.add('qr-unavailable');
+    container.innerHTML = `
+      <p class="qr-fallback-msg">📵 QR code indisponible<br>(bibliothèque non chargée)</p>
+      <p class="qr-fallback-msg">Utilisez le lien ci-dessus à la place.</p>
+    `;
+    console.warn('QR code : la bibliothèque qrcode (vendor/qrcode.js) n\'est pas chargée.');
+    return;
+  }
+
+  try {
+    container.classList.remove('qr-unavailable');
+    // typeNumber 0 = taille auto-détectée selon la longueur du texte,
+    // niveau de correction d'erreur H (le plus robuste).
+    const qr = qrcode(0, 'H');
+    qr.addData(getInviteLink());
+    qr.make();
+
+    const px = size || 160;
+    container.innerHTML = qr.createSvgTag({ scalable: true });
+    const svg = container.querySelector('svg');
+    if (svg) {
+      svg.style.width  = px + 'px';
+      svg.style.height = px + 'px';
+      svg.style.display = 'block';
+    }
+  } catch (e) {
+    container.classList.add('qr-unavailable');
+    container.innerHTML = `<p class="qr-fallback-msg">📵 QR code indisponible<br>Utilisez le lien ci-dessus.</p>`;
+    console.warn('QR code : erreur lors de la génération.', e);
+  }
 }
 
 function openQrModal() {
