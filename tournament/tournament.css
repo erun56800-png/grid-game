@@ -1,0 +1,77 @@
+/* Styles spécifiques au mode tournoi — vient compléter ../style.css
+   (déjà chargée avant celle-ci), aucune classe n'y est redéfinie. */
+
+#t-dash-body {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+#t-my-match-panel {
+  background: linear-gradient(90deg, #ffb300, #e94560);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  text-align: center;
+  color: #1a1a2e;
+}
+#t-my-match-panel h2 { font-size: 1.1rem; margin-bottom: 4px; }
+#t-my-match-panel p  { font-size: 0.9rem; margin-bottom: 10px; }
+#t-btn-join-match {
+  width: auto;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: #1a1a2e;
+  color: #fff;
+  font-weight: bold;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+#t-btn-join-match:hover { background: #e94560; }
+
+#t-bracket h2 { color: #e94560; margin-bottom: 16px; text-align: center; }
+#t-bracket h3 { color: #aaa; margin: 20px 0 10px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+
+.t-pool-card {
+  background: rgba(255,255,255,0.05);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+.t-pool-card h4 { color: #fff; font-size: 0.95rem; margin-bottom: 4px; }
+.t-standings {
+  list-style: decimal;
+  padding-left: 20px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: #ddd;
+}
+.t-standings li { margin-bottom: 3px; }
+
+.t-knockout-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  font-size: 0.88rem;
+  flex-wrap: wrap;
+}
+.t-knockout-row span:first-child { font-weight: bold; color: #e94560; }
+
+#t-final-standings-list {
+  list-style: none;
+  padding: 0;
+  text-align: center;
+}
+#t-final-standings-list li {
+  font-size: 1.1rem;
+  padding: 8px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
