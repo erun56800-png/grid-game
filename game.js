@@ -139,14 +139,16 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   const params = new URLSearchParams(location.search);
-  const roomParam = params.get('room');
-  const nameParam  = params.get('name');
-  const hostParam  = params.get('host');
+  const roomParam      = params.get('room');
+  const nameParam      = params.get('name');
+  const hostParam      = params.get('host');
+  const spectatorParam = params.get('spectator');
   if (roomParam) document.getElementById('room-code').value = roomParam.toUpperCase();
   if (nameParam)  document.getElementById('player-name').value = nameParam;
   if (hostParam)  hostTokenParam = hostParam;
+  if (spectatorParam === '1') document.getElementById('spectator-checkbox').checked = true;
 
-  if (roomParam && (nameParam || hostParam)) {
+  if (roomParam && (nameParam || hostParam || spectatorParam === '1')) {
     proceedFromLogin();
   }
 });
