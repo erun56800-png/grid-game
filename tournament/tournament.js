@@ -36,6 +36,8 @@ let tState           = null;   // copie locale de l'état Firebase
 let myHostToken      = null;
 let hostTokenParam   = null;
 let hostAdvanceInterval = null;
+let tLiveRooms       = {};  // roomCode -> dernier état lu de rooms/{roomCode} (panneau admin)
+let tLiveMatchesInfo  = []; // dernière liste de matchs en cours (voir collectActiveMatches)
 
 window.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
@@ -106,12 +108,11 @@ async function proceedFromTLogin() {
         }
       }
     } else {
-      if (amSpectator) {
-        errEl.textContent = "Ce tournoi n'existe pas encore.";
-        return;
-      }
+      // Un participant OU un simple organisateur (case "Ne participe pas" —
+      // ex. le poste VPI) peut créer le tournoi ; il en devient l'hôte dans
+      // les deux cas. Seul un participant obtient en plus une fiche équipe.
       myHostToken = generateTHostToken();
-      myTeamId = teamIdFor(myTeamName);
+      if (!amSpectator) myTeamId = teamIdFor(myTeamName);
       await tournamentRef.set({
         hostToken:  myHostToken,
         createdAt:  Date.now(),
@@ -120,7 +121,7 @@ async function proceedFromTLogin() {
         poolRounds: 3,
         poolWinScore: 8,
         finalWinScore: T_KNOCKOUT_WIN_SCORE_DEFAULT,
-        teams:      { [myTeamId]: { name: myTeamName, checkedInAt: Date.now() } },
+        teams:      amSpectator ? {} : { [myTeamId]: { name: myTeamName, checkedInAt: Date.now() } },
         pools:      {},
         knockout:   {}
       });
@@ -148,7 +149,9 @@ function enterTournamentScreen() {
 
   clearInterval(hostAdvanceInterval);
   hostAdvanceInterval = setInterval(() => {
-    if (isTHost() && tState && tState.status === 'playing') hostAdvanceTournamentIfNeeded();
+    if (!isTHost() || !tState) return;
+    if (tState.status === 'playing') hostAdvanceTournamentIfNeeded();
+    refreshLiveMatchData();
   }, 5000);
 }
 
@@ -183,6 +186,34 @@ async function copyTInviteLink() {
   } catch (e) { window.prompt('Copiez ce lien :', getTInviteLink()); }
 }
 
+// Lien de reconnexion d'une équipe à SA salle de match (à communiquer si
+// son terminal plante ou perd la connexion en cours de tournoi).
+function getTeamMatchLink(roomCode, teamNameStr) {
+  const url = new URL('../index.html', location.href);
+  url.searchParams.set('room', roomCode);
+  url.searchParams.set('name', teamNameStr);
+  return url.toString();
+}
+// Lien "hôte" vers une salle de match précise : donne à l'administrateur
+// du tournoi les contrôles hôte habituels du jeu (passer au joueur
+// suivant, passage automatique...) dans cette partie précisément.
+function getMatchSuperviseLink(roomCode) {
+  const url = new URL('../index.html', location.href);
+  url.searchParams.set('room', roomCode);
+  url.searchParams.set('host', (tState && tState.hostToken) || myHostToken || '');
+  return url.toString();
+}
+async function copyPlainLink(link, feedbackBtn) {
+  try {
+    await navigator.clipboard.writeText(link);
+    if (feedbackBtn) {
+      const original = feedbackBtn.textContent;
+      feedbackBtn.textContent = '✅ Copié !';
+      setTimeout(() => { feedbackBtn.textContent = original; }, 2000);
+    }
+  } catch (e) { window.prompt('Copiez ce lien :', link); }
+}
+
 async function pushTLog(msg) {
   await tournamentRef.child('log').push({ msg, ts: Date.now() });
 }
@@ -208,7 +239,10 @@ function onTStateUpdate(snap) {
   document.getElementById('screen-t-dashboard').classList.add('active');
   renderTDashboard();
 
-  if (isTHost()) hostAdvanceTournamentIfNeeded();
+  if (isTHost()) {
+    hostAdvanceTournamentIfNeeded();
+    refreshLiveMatchData();
+  }
 }
 
 // ============================================================
@@ -354,7 +388,11 @@ function createMatchRoomState(teamEntries, winScore) {
     status: 'playing', turn: 1, currentPlayer: first, playerOrder: order,
     players, objects, traps: {}, log: {},
     settings: {
-      movementMode: 'relative', modeLocked: false, hostId: null,
+      // hostToken reprend celui du tournoi : le lien "Superviser" de
+      // l'administrateur donne ainsi les contrôles hôte habituels (passer
+      // au joueur suivant, passage automatique...) dans CHAQUE salle de
+      // match, sans avoir à re-générer un jeton par match.
+      movementMode: 'relative', modeLocked: false, hostId: null, hostToken: tState.hostToken || null,
       expectedPlayers: teamEntries.length, gameModePolicy: 'free', ghostAllowed: true,
       minMoves: 1, maxMoves: 10, winScore: winScore, initObjects: 15,
       turnTimeLimit: 0, trapsEnabled: false, trapCount: 0, preAssignMoves: true,
@@ -631,6 +669,140 @@ function openMyCurrentMatch() {
 }
 
 // ============================================================
+//  PANNEAU ADMINISTRATEUR (hôte uniquement) — vue d'ensemble en direct
+//  de tous les matchs en cours, avec liens de secours par équipe et
+//  contrôles rapides (passage automatique / superviser une partie).
+// ============================================================
+function collectActiveMatches() {
+  if (!tState) return [];
+  const list = [];
+  const pools = tState.pools || {};
+  Object.keys(pools).sort((a, b) => Number(a) - Number(b)).forEach(poolId => {
+    const pool = pools[poolId];
+    if (tState.format === 'shared') {
+      const rounds = pool.rounds || {};
+      Object.keys(rounds).sort((a, b) => Number(a) - Number(b)).forEach(rid => {
+        const r = rounds[rid];
+        if (r.status === 'playing') {
+          list.push({ label: `Poule ${Number(poolId) + 1} — Manche ${Number(rid) + 1}`, roomCode: r.roomCode, teamIds: pool.teamIds });
+        }
+      });
+    } else {
+      const matches = pool.matches || {};
+      Object.keys(matches).forEach(mid => {
+        const m = matches[mid];
+        if (m.status === 'playing') {
+          list.push({ label: `Poule ${Number(poolId) + 1} — ${teamName(m.teamA)} vs ${teamName(m.teamB)}`, roomCode: m.roomCode, teamIds: [m.teamA, m.teamB] });
+        }
+      });
+    }
+  });
+
+  const ko = tState.knockout || {};
+  const koLabels = { semi1: '🥉 Demi-finale 1', semi2: '🥉 Demi-finale 2', final: '🏆 Finale', bronze: '🥈 Petite finale (3e/4e)' };
+  Object.keys(koLabels).forEach(key => {
+    const m = ko[key];
+    if (m && m.status === 'playing') list.push({ label: koLabels[key], roomCode: m.roomCode, teamIds: [m.teamA, m.teamB] });
+  });
+
+  return list;
+}
+
+async function refreshLiveMatchData() {
+  if (!isTHost() || !tState) return;
+  const matches = collectActiveMatches();
+  const entries = await Promise.all(matches.map(async m => {
+    const snap = await db.ref('rooms/' + m.roomCode).once('value');
+    return [m.roomCode, snap.val()];
+  }));
+  tLiveRooms = Object.fromEntries(entries);
+  tLiveMatchesInfo = matches;
+  renderTAdminPanel();
+}
+
+// Bascule le passage automatique d'une équipe DIRECTEMENT depuis le
+// panneau admin (même effet que la case à cocher dans le panneau hôte du
+// jeu normal — voir hostSetAutoSkip dans game.js — mais sans avoir besoin
+// d'ouvrir la partie). L'action de "passer au joueur suivant" ponctuelle,
+// elle, reste dans le lien "Superviser" : elle dépend de règles de jeu
+// plus complexes (déplacements, régénération des objets...) qu'il vaut
+// mieux ne garder qu'à un seul endroit (game.js) pour ne jamais diverger.
+async function tAdminToggleAutoSkip(roomCode, playerId, checked) {
+  if (!isTHost()) return;
+  await db.ref('rooms/' + roomCode).update({ [`players/${playerId}/autoSkip`]: !!checked });
+  if (tLiveRooms[roomCode] && tLiveRooms[roomCode].players && tLiveRooms[roomCode].players[playerId]) {
+    tLiveRooms[roomCode].players[playerId].autoSkip = !!checked;
+  }
+}
+
+function renderTAdminPanel() {
+  const section = document.getElementById('t-admin-panel');
+  if (!section) return;
+  if (!isTHost() || tLiveMatchesInfo.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+
+  const linkRegistry = [];    // idx -> lien à copier/ouvrir
+  const skipRegistry  = [];   // idx -> { roomCode, playerId }
+
+  const html = tLiveMatchesInfo.map(m => {
+    const room = tLiveRooms[m.roomCode];
+    if (!room) return '';
+    const players = room.players || {};
+    const rows = m.teamIds.map(id => {
+      const p = players[id];
+      if (!p) return '';
+      const isTurn = room.currentPlayer === id;
+      const linkIdx = linkRegistry.push(getTeamMatchLink(m.roomCode, p.name)) - 1;
+      const skipIdx = skipRegistry.push({ roomCode: m.roomCode, playerId: id }) - 1;
+      return `<li class="t-admin-player-row${isTurn ? ' t-admin-turn' : ''}">
+        <span class="t-admin-player-name">${isTurn ? '▶ ' : ''}${escapeTHtml(p.name)}</span>
+        <span class="t-admin-player-score">${p.score || 0} ⭐</span>
+        <label class="t-admin-autoskip"><input type="checkbox" data-skip-idx="${skipIdx}" ${p.autoSkip ? 'checked' : ''}> passer auto</label>
+        <button class="small-btn" data-link-idx="${linkIdx}" data-link-action="copy" title="Copier le lien de reconnexion de cette équipe">🔗 Lien</button>
+      </li>`;
+    }).join('');
+    const superviseIdx = linkRegistry.push(getMatchSuperviseLink(m.roomCode)) - 1;
+    return `<div class="t-admin-match-card">
+      <h4>${escapeTHtml(m.label)}</h4>
+      <ul class="t-admin-player-list">${rows}</ul>
+      <button class="small-btn t-admin-supervise-btn" data-link-idx="${superviseIdx}" data-link-action="open" title="Ouvrir cette partie avec les contrôles hôte (passer au joueur suivant, etc.)">🔧 Superviser cette partie</button>
+    </div>`;
+  }).join('');
+
+  section.innerHTML = `
+    <h3>🛠️ Vue d'ensemble en direct (administrateur)</h3>
+    <p class="hint-text">🔗 copie le lien de reconnexion d'une équipe (à communiquer si son terminal se déconnecte). 🔧 ouvre la partie avec les contrôles hôte pour passer un joueur ponctuellement.</p>
+    <div id="t-admin-matches">${html}</div>
+  `;
+
+  // Reconnecte les boutons/cases à leurs données réelles via des propriétés
+  // JS (jamais interpolées dans du HTML) : mêmes précautions que pour
+  // l'historique des salles, les noms d'équipe étant du texte libre.
+  const container = document.getElementById('t-admin-matches');
+  container.querySelectorAll('[data-link-idx]').forEach(el => {
+    el.__link = linkRegistry[Number(el.getAttribute('data-link-idx'))];
+  });
+  container.querySelectorAll('[data-skip-idx]').forEach(el => {
+    el.__skip = skipRegistry[Number(el.getAttribute('data-skip-idx'))];
+  });
+
+  if (!container.__wired) {
+    container.__wired = true;
+    container.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-link-action]');
+      if (!btn || !btn.__link) return;
+      if (btn.getAttribute('data-link-action') === 'open') window.open(btn.__link, '_blank');
+      else copyPlainLink(btn.__link, btn);
+    });
+    container.addEventListener('change', (e) => {
+      const cb = e.target.closest('[data-skip-idx]');
+      if (!cb || !cb.__skip) return;
+      tAdminToggleAutoSkip(cb.__skip.roomCode, cb.__skip.playerId, cb.checked);
+    });
+  }
+}
+
+// ============================================================
 //  TABLEAU DE BORD
 // ============================================================
 function escapeTHtml(str) {
@@ -642,6 +814,7 @@ function escapeTHtml(str) {
 function renderTDashboard() {
   document.getElementById('t-dash-code').textContent = tournamentCode;
   renderTMyMatchPanel();
+  renderTAdminPanel();
   renderTPools();
   renderTKnockout();
   renderTFinalStandings();

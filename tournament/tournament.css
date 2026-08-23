@@ -33,6 +33,39 @@
 #t-bracket h2 { color: #e94560; margin-bottom: 16px; text-align: center; }
 #t-bracket h3 { color: #aaa; margin: 20px 0 10px; border-bottom: 1px solid #333; padding-bottom: 6px; }
 
+#t-admin-panel {
+  background: rgba(255,179,0,0.08);
+  border: 1px solid rgba(255,179,0,0.35);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+#t-admin-panel h3 { color: #ffb300; margin-bottom: 4px; border: none; }
+#t-admin-panel .hint-text { margin-bottom: 12px; }
+.t-admin-match-card {
+  background: rgba(255,255,255,0.05);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.t-admin-match-card h4 { color: #fff; font-size: 0.92rem; margin-bottom: 6px; }
+.t-admin-player-list { list-style: none; padding: 0; margin: 0 0 8px; }
+.t-admin-player-row {
+  display: grid;
+  grid-template-columns: minmax(70px, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 0.85rem;
+  color: #ddd;
+}
+.t-admin-player-row.t-admin-turn { color: #ffb300; font-weight: bold; }
+.t-admin-player-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-admin-player-score { color: #aaa; white-space: nowrap; }
+.t-admin-autoskip { font-size: 0.78rem; color: #aaa; display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+.t-admin-player-row .small-btn { width: auto; padding: 4px 10px; font-size: 0.78rem; }
+.t-admin-supervise-btn { width: auto; padding: 6px 12px; font-size: 0.82rem; margin-top: 4px; }
+
 .t-pool-card {
   background: rgba(255,255,255,0.05);
   border-radius: 10px;
