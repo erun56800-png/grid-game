@@ -71,6 +71,20 @@ function generateTHostToken() {
   return 'thost-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+// ── Persistance du jeton hôte (localStorage) ──
+// Le seul moyen "officiel" de redevenir hôte est le lien avec ?host=...
+// Si l'hôte perd ce lien (onglet fermé, favori non enregistré...) et se
+// contente de retaper son nom/code de tournoi, il doit quand même
+// retrouver son statut d'hôte SUR LE MÊME APPAREIL : on mémorise donc le
+// jeton par code de tournoi et on le relit silencieusement à la connexion.
+function thostStorageKey(code) { return 'thost_' + code; }
+function saveTHostToken(code, token) {
+  try { localStorage.setItem(thostStorageKey(code), token); } catch (e) { /* stockage indisponible */ }
+}
+function loadSavedTHostToken(code) {
+  try { return localStorage.getItem(thostStorageKey(code)); } catch (e) { return null; }
+}
+
 // ============================================================
 //  ÉCRAN DE CONNEXION
 // ============================================================
@@ -96,7 +110,14 @@ async function proceedFromTLogin() {
 
       if (hostTokenParam && state.hostToken === hostTokenParam) {
         myHostToken = hostTokenParam;
+      } else {
+        // Pas de lien hôte dans l'URL (retour via nom + code de tournoi) :
+        // on tente de retrouver le jeton précédemment mémorisé sur cet
+        // appareil pour ce tournoi.
+        const saved = loadSavedTHostToken(tournamentCode);
+        if (saved && state.hostToken === saved) myHostToken = saved;
       }
+      if (myHostToken) saveTHostToken(tournamentCode, myHostToken);
 
       if (!amSpectator) {
         myTeamId = teamIdFor(myTeamName);
@@ -114,6 +135,7 @@ async function proceedFromTLogin() {
       // ex. le poste VPI) peut créer le tournoi ; il en devient l'hôte dans
       // les deux cas. Seul un participant obtient en plus une fiche équipe.
       myHostToken = generateTHostToken();
+      saveTHostToken(tournamentCode, myHostToken);
       if (!amSpectator) myTeamId = teamIdFor(myTeamName);
       await tournamentRef.set({
         hostToken:  myHostToken,
@@ -760,8 +782,10 @@ async function advanceKnockoutStage() {
 // demi-finales terminées : lance explicitement la finale et la petite
 // finale — jamais automatiquement, pour laisser l'hôte rassembler tout le
 // monde (VPI, etc.) avant de démarrer.
+let tLaunchFinalsInProgress = false;
 async function hostLaunchFinals() {
   if (!isTHost() || !tState) return;
+  if (tLaunchFinalsInProgress) return; // évite un double-clic concurrent
   const ko = tState.knockout || {};
   if (!ko.semi1 || !ko.semi2 || ko.semi1.status !== 'done' || ko.semi2.status !== 'done') return;
   if (ko.final) return; // déjà lancées
@@ -770,6 +794,7 @@ async function hostLaunchFinals() {
   const finalRoom  = `T-${tournamentCode}-FINAL`;
   const bronzeRoom = `T-${tournamentCode}-BRONZE`;
 
+  tLaunchFinalsInProgress = true;
   const btn = document.getElementById('t-btn-launch-finals');
   if (btn) btn.disabled = true;
   try {
@@ -780,7 +805,13 @@ async function hostLaunchFinals() {
       'knockout/bronze': { teamA: ko.semi1.loserId,  teamB: ko.semi2.loserId,  roomCode: bronzeRoom, status: 'playing' }
     });
     await pushTLog("🏆 Finale et petite finale lancées par l'hôte !");
+  } catch (e) {
+    console.error('Erreur hostLaunchFinals :', e);
+    alert((e && e.code === 'PERMISSION_DENIED')
+      ? "⛔ Impossible de lancer la finale : accès à la base de données refusé (vérifiez que vous êtes bien connecté·e en tant qu'hôte)."
+      : "Erreur lors du lancement de la finale : " + (e && e.message ? e.message : e));
   } finally {
+    tLaunchFinalsInProgress = false;
     if (btn) btn.disabled = false;
   }
 }
