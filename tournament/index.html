@@ -70,6 +70,55 @@
 
         <div id="t-launch-estimate" class="host-section"></div>
 
+        <h3>🎮 Règles imposées à toutes les équipes</h3>
+
+        <div class="settings-row">
+          <label>Déplacements par tour
+            <input type="number" id="t-moves-per-turn" value="8" min="1" max="30">
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <label><input type="checkbox" id="t-traps-enabled" checked
+            onchange="document.getElementById('t-trap-count-row').style.display = this.checked ? 'block' : 'none'"> 🕳️ Pièges activés</label>
+        </div>
+        <div class="settings-row" id="t-trap-count-row">
+          <label>Nombre de pièges
+            <input type="number" id="t-trap-count" value="10" min="0" max="50">
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <label>Mode de déplacement imposé
+            <select id="t-movement-mode">
+              <option value="relative" selected>↺⬆↻⬇ Relatif</option>
+              <option value="absolute">🧭 Absolu</option>
+              <option value="free">🆓 Libre (chaque équipe choisit)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <label>Mode de jeu imposé
+            <select id="t-game-mode">
+              <option value="direct">⚡ Immédiat</option>
+              <option value="deferred" selected>📝 Différé (sans fantôme)</option>
+              <option value="deferred-ghost">👻 Différé fantôme</option>
+              <option value="free">🆓 Libre (chaque équipe choisit)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <label><input type="checkbox" id="t-turn-time-enabled" checked
+            onchange="document.getElementById('t-turn-time-row').style.display = this.checked ? 'block' : 'none'"> ⏱️ Limiter le temps par tour</label>
+        </div>
+        <div class="settings-row" id="t-turn-time-row">
+          <label>Secondes par tour
+            <input type="number" id="t-turn-time-limit" value="180" min="10" max="600">
+          </label>
+        </div>
+
         <button id="t-btn-launch" onclick="launchTournament()">▶ Lancer le tournoi</button>
       </div>
       <div id="t-lobby-wait-msg" style="display:none">
