@@ -468,9 +468,29 @@ async function closeMatchRoom(roomCode) {
 // ============================================================
 //  ORCHESTRATION AUTOMATIQUE (hôte uniquement)
 // ============================================================
+// Verrou de ré-entrance : chaque écriture faite ici déclenche le listener
+// .on('value', onTStateUpdate) qui rappelle lui-même cette fonction — sans
+// ce verrou, un appel imbriqué pourrait s'exécuter AVANT que l'appel en
+// cours n'ait fini d'écrire toutes ses étapes (ex : manche marquée "done"
+// mais manche suivante pas encore créée), et lirait alors un état
+// intermédiaire incohérent (poule marquée "terminée" avec une seule manche
+// jouée sur deux, par exemple). Le verrou fait que seul l'appel déjà en
+// cours agit ; les appels imbriqués ou concurrents (minuteur de 5s compris)
+// se contentent de ne rien faire, l'état étant de toute façon repris au
+// prochain appel une fois celui-ci terminé.
+let tAdvanceInProgress = false;
 async function hostAdvanceTournamentIfNeeded() {
+  if (tAdvanceInProgress) return;
   if (!isTHost() || !tState || tState.status !== 'playing') return;
+  tAdvanceInProgress = true;
+  try {
+    await hostAdvanceTournamentStep();
+  } finally {
+    tAdvanceInProgress = false;
+  }
+}
 
+async function hostAdvanceTournamentStep() {
   const pools = tState.pools || {};
   const poolIds = Object.keys(pools);
   let anyPoolNotDone = false;
@@ -494,42 +514,68 @@ async function hostAdvanceTournamentIfNeeded() {
   await advanceKnockoutStage();
 }
 
+// Toutes les manches d'une même poule (mode "Poule partagée") se jouent
+// dans LA MÊME salle, réutilisée d'une manche à l'autre : dès que
+// l'orchestrateur capture le score d'une manche terminée, il relance
+// directement la manche suivante dans cette salle (nouvel écrasement de
+// son état par createMatchRoomState) au lieu d'ouvrir une nouvelle salle.
+// Les équipes gardent donc le MÊME onglet ouvert d'une manche à l'autre —
+// il se met à jour tout seul — et ne passent jamais par la salle d'attente
+// générique du jeu normal (où personne n'est hôte pour la relancer) tant
+// qu'il reste des manches à jouer dans cette poule.
 async function advanceSharedPool(poolId, pool) {
   const rounds = pool.rounds || {};
   const roundIds = Object.keys(rounds).map(Number);
   const totalRounds = tState.poolRounds || 3;
+  const poolRoomCode = pool.roomCode || `T-${tournamentCode}-P${poolId}`;
 
-  if (roundIds.length > 0) {
-    const lastId = String(Math.max(...roundIds));
-    const last = rounds[lastId];
-    if (last.status !== 'done') {
-      const roomSnap = await db.ref('rooms/' + last.roomCode).once('value');
-      const roomState = roomSnap.val();
-      if (roomState && (roomState.status === 'finished' || roomState.status === 'ended')) {
-        const scores = {};
-        pool.teamIds.forEach(id => { scores[id] = (roomState.players && roomState.players[id] && roomState.players[id].score) || 0; });
-        await tournamentRef.update({
-          [`pools/${poolId}/rounds/${lastId}/status`]: 'done',
-          [`pools/${poolId}/rounds/${lastId}/scores`]: scores
-        });
-        await closeMatchRoom(last.roomCode);
-      }
-      return;
-    }
-  }
-
-  if (roundIds.length < totalRounds) {
-    const newRoundId = String(roundIds.length);
-    const roomCode = `T-${tournamentCode}-P${poolId}-R${newRoundId}`;
-    await db.ref('rooms/' + roomCode).set(createMatchRoomState(mkEntries(pool.teamIds), tState.poolWinScore));
-    await tournamentRef.update({ [`pools/${poolId}/rounds/${newRoundId}`]: { roomCode, status: 'playing' } });
+  if (roundIds.length === 0) {
+    await db.ref('rooms/' + poolRoomCode).set(createMatchRoomState(mkEntries(pool.teamIds), tState.poolWinScore));
+    await tournamentRef.update({
+      [`pools/${poolId}/roomCode`]: poolRoomCode,
+      [`pools/${poolId}/rounds/0`]: { roomCode: poolRoomCode, status: 'playing' }
+    });
     return;
   }
 
-  const roundScores = Object.values(rounds).map(r => r.scores || {});
-  const standings = TournamentLogic.computeSharedPoolStandings(pool.teamIds, roundScores);
-  await tournamentRef.update({ [`pools/${poolId}/standings`]: standings, [`pools/${poolId}/status`]: 'done' });
-  await pushTLog(`✅ Poule ${Number(poolId) + 1} terminée.`);
+  const lastId = String(Math.max(...roundIds));
+  const last = rounds[lastId];
+  if (last.status !== 'done') {
+    const roomSnap = await db.ref('rooms/' + poolRoomCode).once('value');
+    const roomState = roomSnap.val();
+    if (!roomState || (roomState.status !== 'finished' && roomState.status !== 'ended')) return; // manche toujours en cours
+
+    const scores = {};
+    pool.teamIds.forEach(id => { scores[id] = (roomState.players && roomState.players[id] && roomState.players[id].score) || 0; });
+
+    if (roundIds.length < totalRounds) {
+      // D'autres manches restent à jouer : capture le score ET relance tout
+      // de suite la manche suivante, dans la même salle, en une seule étape
+      // (jamais de passage par la salle d'attente entre deux manches).
+      const newRoundId = String(roundIds.length);
+      await db.ref('rooms/' + poolRoomCode).set(createMatchRoomState(mkEntries(pool.teamIds), tState.poolWinScore));
+      await tournamentRef.update({
+        [`pools/${poolId}/rounds/${lastId}/status`]: 'done',
+        [`pools/${poolId}/rounds/${lastId}/scores`]: scores,
+        [`pools/${poolId}/rounds/${newRoundId}`]: { roomCode: poolRoomCode, status: 'playing' }
+      });
+      return;
+    }
+
+    // Dernière manche de la poule : capture son score ET calcule directement
+    // les classements finaux dans la même étape (plutôt que d'attendre un
+    // appel supplémentaire de l'orchestrateur pour s'en apercevoir).
+    const roundScores = Object.keys(rounds).map(rid => (rid === lastId ? scores : (rounds[rid].scores || {})));
+    const standings = TournamentLogic.computeSharedPoolStandings(pool.teamIds, roundScores);
+    await tournamentRef.update({
+      [`pools/${poolId}/rounds/${lastId}/status`]: 'done',
+      [`pools/${poolId}/rounds/${lastId}/scores`]: scores,
+      [`pools/${poolId}/standings`]: standings,
+      [`pools/${poolId}/status`]: 'done'
+    });
+    await closeMatchRoom(poolRoomCode);
+    await pushTLog(`✅ Poule ${Number(poolId) + 1} terminée.`);
+  }
 }
 
 async function advanceDuelsPool(poolId, pool) {
@@ -619,32 +665,53 @@ async function setupKnockoutStage() {
   await pushTLog('🥇 Phase finale lancée : demi-finales en cours. Les autres équipes peuvent regarder !');
 }
 
+// Capture le résultat de chaque match "playing" du groupe fourni (les deux
+// demies, ou la finale + petite finale) EN UNE SEULE ÉTAPE — plutôt que de
+// s'arrêter au premier trouvé et compter sur un appel séparé pour le
+// second (les deux matchs d'un même groupe sont indépendants, aucune
+// raison d'attendre un passage supplémentaire de l'orchestrateur pour
+// traiter le second alors que son score est peut-être déjà disponible).
+// Renvoie true si tous les matchs du groupe sont "done" à l'issue de cet
+// appel (y compris ceux capturés à l'instant).
+async function advanceKnockoutGroup(keys, ko) {
+  let allDone = true;
+  for (const key of keys) {
+    const m = ko[key];
+    if (!m) { allDone = false; continue; }
+    if (m.status === 'done') continue;
+    const roomSnap = await db.ref('rooms/' + m.roomCode).once('value');
+    const roomState = roomSnap.val();
+    if (roomState && (roomState.status === 'finished' || roomState.status === 'ended')) {
+      const scoreA = (roomState.players[m.teamA] || {}).score || 0;
+      const scoreB = (roomState.players[m.teamB] || {}).score || 0;
+      const winnerId = scoreA >= scoreB ? m.teamA : m.teamB;
+      const loserId  = winnerId === m.teamA ? m.teamB : m.teamA;
+      await tournamentRef.update({
+        [`knockout/${key}/status`]: 'done',
+        [`knockout/${key}/winnerId`]: winnerId,
+        [`knockout/${key}/loserId`]: loserId
+      });
+      await closeMatchRoom(m.roomCode);
+      // Répercute sur l'objet local `ko` (passé par référence) : sans ça,
+      // l'appelant continuerait à lire l'ancien statut "playing" et un
+      // winnerId manquant pour ce match tant que tState n'a pas été
+      // rafraîchi par le listener Firebase (ex : pour construire tout de
+      // suite la finale à partir des vainqueurs des demies).
+      m.status = 'done';
+      m.winnerId = winnerId;
+      m.loserId = loserId;
+    } else {
+      allDone = false;
+    }
+  }
+  return allDone;
+}
+
 async function advanceKnockoutStage() {
   const ko = tState.knockout || {};
   const finalWinScore = tState.finalWinScore || T_KNOCKOUT_WIN_SCORE_DEFAULT;
 
-  for (const key of ['semi1', 'semi2']) {
-    const m = ko[key];
-    if (m && m.status === 'playing') {
-      const roomSnap = await db.ref('rooms/' + m.roomCode).once('value');
-      const roomState = roomSnap.val();
-      if (roomState && (roomState.status === 'finished' || roomState.status === 'ended')) {
-        const scoreA = (roomState.players[m.teamA] || {}).score || 0;
-        const scoreB = (roomState.players[m.teamB] || {}).score || 0;
-        const winnerId = scoreA >= scoreB ? m.teamA : m.teamB;
-        const loserId  = winnerId === m.teamA ? m.teamB : m.teamA;
-        await tournamentRef.update({
-          [`knockout/${key}/status`]: 'done',
-          [`knockout/${key}/winnerId`]: winnerId,
-          [`knockout/${key}/loserId`]: loserId
-        });
-        await closeMatchRoom(m.roomCode);
-      }
-      return;
-    }
-  }
-
-  if (!ko.semi1 || !ko.semi2 || ko.semi1.status !== 'done' || ko.semi2.status !== 'done') return;
+  if (!(await advanceKnockoutGroup(['semi1', 'semi2'], ko))) return;
 
   if (!ko.final) {
     const finalRoom  = `T-${tournamentCode}-FINAL`;
@@ -659,23 +726,7 @@ async function advanceKnockoutStage() {
     return;
   }
 
-  for (const key of ['final', 'bronze']) {
-    const m = ko[key];
-    if (m.status === 'playing') {
-      const roomSnap = await db.ref('rooms/' + m.roomCode).once('value');
-      const roomState = roomSnap.val();
-      if (roomState && (roomState.status === 'finished' || roomState.status === 'ended')) {
-        const scoreA = (roomState.players[m.teamA] || {}).score || 0;
-        const scoreB = (roomState.players[m.teamB] || {}).score || 0;
-        const winnerId = scoreA >= scoreB ? m.teamA : m.teamB;
-        await tournamentRef.update({ [`knockout/${key}/status`]: 'done', [`knockout/${key}/winnerId`]: winnerId });
-        await closeMatchRoom(m.roomCode);
-      }
-      return;
-    }
-  }
-
-  if (ko.final.status !== 'done' || ko.bronze.status !== 'done') return;
+  if (!(await advanceKnockoutGroup(['final', 'bronze'], ko))) return;
 
   const rank1 = ko.final.winnerId;
   const rank2 = ko.final.teamA === rank1 ? ko.final.teamB : ko.final.teamA;
@@ -951,6 +1002,18 @@ function renderTMyMatchPanel() {
   }
 }
 
+// Ligne "match" d'une poule (manche partagée ou duel), avec son statut —
+// joué / en cours / à venir — dans le même esprit que les pages à
+// compléter au fil d'une coupe du monde de football.
+function tMatchRowHtml(label, status, resultTxt) {
+  const icon = status === 'done' ? '✅' : (status === 'playing' ? '▶' : '⏳');
+  const cls  = status === 'done' ? 't-match-done' : (status === 'playing' ? 't-match-playing' : 't-match-upcoming');
+  return `<li class="t-match-row ${cls}">
+    <span>${icon} ${escapeTHtml(label)}</span>
+    <span class="t-match-result">${resultTxt ? escapeTHtml(resultTxt) : (status === 'playing' ? 'en cours' : 'à venir')}</span>
+  </li>`;
+}
+
 function renderTPools() {
   const el = document.getElementById('t-pools-view');
   const pools = tState.pools || {};
@@ -960,6 +1023,31 @@ function renderTPools() {
     const pool = pools[poolId];
     const teamsTxt = pool.teamIds.map(teamName).map(escapeTHtml).join(', ');
     const statusTxt = pool.status === 'done' ? '✅ Terminée' : '▶ En cours';
+
+    let matchRows;
+    if (tState.format === 'shared') {
+      const totalRounds = tState.poolRounds || 3;
+      const rounds = pool.rounds || {};
+      matchRows = [];
+      for (let i = 0; i < totalRounds; i++) {
+        const r = rounds[i];
+        const label = `Manche ${i + 1}`;
+        if (!r) { matchRows.push(tMatchRowHtml(label, 'upcoming')); continue; }
+        const resultTxt = (r.status === 'done' && r.scores)
+          ? pool.teamIds.map(id => `${teamName(id)} ${r.scores[id] != null ? r.scores[id] : 0}`).join(' · ')
+          : null;
+        matchRows.push(tMatchRowHtml(label, r.status, resultTxt));
+      }
+    } else {
+      const matches = pool.matches || {};
+      matchRows = Object.keys(matches).map(mid => {
+        const m = matches[mid];
+        const label = `${teamName(m.teamA)} vs ${teamName(m.teamB)}`;
+        const resultTxt = m.status === 'done' ? `${m.scoreA}-${m.scoreB} (${teamName(m.winnerId)} gagne)` : null;
+        return tMatchRowHtml(label, m.status, resultTxt);
+      });
+    }
+
     let standingsHtml = '';
     if (pool.standings && pool.standings.length) {
       standingsHtml = '<ol class="t-standings">' + pool.standings.map(s =>
@@ -969,9 +1057,26 @@ function renderTPools() {
     return `<div class="t-pool-card">
       <h4>Poule ${Number(poolId) + 1} — ${statusTxt}</h4>
       <p class="hint-text">${teamsTxt}</p>
+      <ul class="t-match-list">${matchRows.join('')}</ul>
       ${standingsHtml}
     </div>`;
   }).join('');
+}
+
+// Vue "arborescence" de la phase finale (demies -> finale / petite finale),
+// façon page à compléter de coupe du monde : une carte par match, avec son
+// statut, reliée visuellement par une flèche vers l'étape suivante.
+function tBracketCardHtml(label, m, extraClass) {
+  const teamsTxt = m ? `${teamName(m.teamA)} vs ${teamName(m.teamB)}` : '?';
+  const status = !m ? 'upcoming' : m.status;
+  const icon = status === 'done' ? '✅' : (status === 'playing' ? '▶' : '⏳');
+  const resultTxt = (m && m.status === 'done') ? `${escapeTHtml(teamName(m.winnerId))} gagne` : (status === 'playing' ? 'en cours' : 'à venir');
+  const cls = status === 'done' ? 't-bracket-done' : (status === 'playing' ? 't-bracket-playing' : 't-bracket-upcoming');
+  return `<div class="t-bracket-match ${cls}${extraClass ? ' ' + extraClass : ''}">
+    <div class="t-bracket-match-label">${escapeTHtml(label)}</div>
+    <div class="t-bracket-match-teams">${escapeTHtml(teamsTxt)}</div>
+    <div class="t-bracket-match-status">${icon} ${escapeTHtml(resultTxt)}</div>
+  </div>`;
 }
 
 function renderTKnockout() {
@@ -980,23 +1085,21 @@ function renderTKnockout() {
   if (!ko.semi1) { wrap.style.display = 'none'; return; }
   wrap.style.display = 'block';
 
-  const rows = [
-    ['🥉 Demi-finale 1', ko.semi1],
-    ['🥉 Demi-finale 2', ko.semi2],
-    ['🏆 Finale', ko.final],
-    ['🥈 Petite finale (3e/4e place)', ko.bronze]
-  ];
-
-  document.getElementById('t-knockout-list').innerHTML = rows.map(([label, m]) => {
-    if (!m) return `<div class="t-knockout-row"><span>${label}</span><span class="hint-text">à venir</span></div>`;
-    const statusTxt = m.status === 'done'
-      ? `✅ ${escapeTHtml(teamName(m.winnerId))} gagne`
-      : '▶ En cours';
-    return `<div class="t-knockout-row">
-      <span>${label}</span>
-      <span>${escapeTHtml(teamName(m.teamA))} vs ${escapeTHtml(teamName(m.teamB))} — ${statusTxt}</span>
-    </div>`;
-  }).join('');
+  document.getElementById('t-knockout-list').innerHTML = `
+    <div class="t-bracket-tree">
+      <div class="t-bracket-stage">
+        <div class="t-bracket-stage-label">Demi-finales</div>
+        ${tBracketCardHtml('🥉 Demi-finale 1', ko.semi1)}
+        ${tBracketCardHtml('🥉 Demi-finale 2', ko.semi2)}
+      </div>
+      <div class="t-bracket-arrow">➜</div>
+      <div class="t-bracket-stage">
+        <div class="t-bracket-stage-label">Finale &amp; petite finale</div>
+        ${tBracketCardHtml('🏆 Finale', ko.final, 't-bracket-final')}
+        ${tBracketCardHtml('🥈 Petite finale (3e/4e)', ko.bronze, 't-bracket-bronze')}
+      </div>
+    </div>
+  `;
 }
 
 function renderTFinalStandings() {
