@@ -38,6 +38,8 @@ let hostTokenParam   = null;
 let hostAdvanceInterval = null;
 let tLiveRooms       = {};  // roomCode -> dernier état lu de rooms/{roomCode} (panneau admin)
 let tLiveMatchesInfo  = []; // dernière liste de matchs en cours (voir collectActiveMatches)
+let myMatchWindowRef     = null; // fenêtre ouverte par openMyCurrentMatch()
+let myMatchWindowRoomCode = null; // code de salle qu'elle affiche actuellement
 
 window.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
@@ -821,7 +823,28 @@ function openMyCurrentMatch() {
   const url = new URL('../index.html', location.href);
   url.searchParams.set('room', String(roomCode).toUpperCase());
   url.searchParams.set('name', myTeamName);
-  window.open(url.toString(), '_blank');
+  // On garde une référence à l'onglet ouvert (voir closeStaleMatchWindow) :
+  // dès qu'il ne montrera plus le match en cours de l'équipe, on le
+  // referme nous-mêmes plutôt que de le laisser affiché sur la salle
+  // d'attente générique du jeu normal (fenêtre "intempestive" oubliée
+  // ouverte à la fin de chaque match de poule).
+  myMatchWindowRef = window.open(url.toString(), '_blank');
+  myMatchWindowRoomCode = roomCode;
+}
+
+// Referme automatiquement l'onglet de match ouvert par openMyCurrentMatch()
+// dès qu'il ne correspond plus au match en cours de l'équipe (partie
+// terminée et aucune nouvelle manche à la même adresse — voir la
+// réutilisation de salle en mode Poule partagée, qui NE déclenche PAS
+// cette fermeture puisque le roomCode reste identique d'une manche à
+// l'autre). Appelée à chaque mise à jour du tableau de bord.
+function closeStaleMatchWindow() {
+  if (!myMatchWindowRef) return;
+  if (myMatchWindowRef.closed) { myMatchWindowRef = null; myMatchWindowRoomCode = null; return; }
+  if (findMyCurrentMatch() === myMatchWindowRoomCode) return; // toujours le bon match (ou la même salle réutilisée)
+  try { myMatchWindowRef.close(); } catch (e) { /* onglet déjà fermé ou hors de portée */ }
+  myMatchWindowRef = null;
+  myMatchWindowRoomCode = null;
 }
 
 // ============================================================
@@ -1147,6 +1170,7 @@ function tMyStatusMessage() {
 }
 
 function renderTMyMatchPanel() {
+  closeStaleMatchWindow();
   const panel = document.getElementById('t-my-match-panel');
   if (amSpectator || !myTeamId) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
