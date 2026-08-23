@@ -305,11 +305,36 @@ function renderTLaunchEstimates() {
 // ============================================================
 //  LANCEMENT DU TOURNOI
 // ============================================================
+// Lit le formulaire "Format du tournoi" et le traduit dans le vocabulaire
+// des réglages du jeu normal (settings.gameModePolicy / .ghostAllowed /
+// .movementMode / .modeLocked), pour que chaque salle de match créée par
+// createMatchRoomState() applique exactement ces réglages à toutes les
+// équipes.
+function readTMatchSettingsForm() {
+  const movesPerTurn = Math.max(1, parseInt(document.getElementById('t-moves-per-turn').value) || 8);
+  const trapsEnabled = document.getElementById('t-traps-enabled').checked;
+  const trapCount    = Math.max(0, parseInt(document.getElementById('t-trap-count').value) || 0);
+
+  const movementSel = document.getElementById('t-movement-mode').value; // 'relative' | 'absolute' | 'free'
+  const modeLocked   = movementSel !== 'free';
+  const movementMode = modeLocked ? movementSel : 'relative';
+
+  const gameModeSel = document.getElementById('t-game-mode').value; // 'direct' | 'deferred' | 'deferred-ghost' | 'free'
+  const gameModePolicy = gameModeSel === 'free' ? 'free' : (gameModeSel === 'direct' ? 'forceDirect' : 'forceDeferred');
+  const ghostAllowed    = gameModeSel === 'deferred-ghost' || gameModeSel === 'free';
+
+  const turnTimeEnabled = document.getElementById('t-turn-time-enabled').checked;
+  const turnTimeLimit   = turnTimeEnabled ? Math.max(10, parseInt(document.getElementById('t-turn-time-limit').value) || 180) : 0;
+
+  return { movesPerTurn, trapsEnabled, trapCount, modeLocked, movementMode, gameModePolicy, ghostAllowed, turnTimeLimit };
+}
+
 async function launchTournament() {
   if (!isTHost() || !tState) return;
   const format       = document.querySelector('input[name="t-format"]:checked').value;
   const poolRounds    = Math.max(1, parseInt(document.getElementById('t-pool-rounds').value) || 3);
   const poolWinScore = Math.max(1, parseInt(document.getElementById('t-pool-win-score').value) || 8);
+  const matchSettings = readTMatchSettingsForm();
 
   const teamIds = Object.keys(tState.teams || {});
   if (teamIds.length < 2) { alert('Il faut au moins 2 équipes inscrites pour lancer le tournoi.'); return; }
@@ -337,7 +362,7 @@ async function launchTournament() {
   try {
     await tournamentRef.update({
       status: 'playing',
-      format, poolRounds, poolWinScore,
+      format, poolRounds, poolWinScore, matchSettings,
       pools: poolsData
     });
     await pushTLog(`🏆 Tournoi lancé — ${format === 'shared' ? 'Poule partagée' : 'Duels'}, ${teamIds.length} équipe(s), ${pools.length} poule(s).`);
@@ -368,7 +393,18 @@ function generateTMatchObjects(count, avoidKeys) {
   return objects;
 }
 
+// Valeurs par défaut si le tournoi a été créé avant l'ajout du
+// paramétrage (matchSettings absent) ou si un champ n'a pas été soumis.
+const T_MATCH_SETTINGS_DEFAULTS = {
+  movesPerTurn: 8, trapsEnabled: true, trapCount: 10,
+  modeLocked: true, movementMode: 'relative',
+  gameModePolicy: 'forceDeferred', ghostAllowed: false,
+  turnTimeLimit: 180
+};
+
 function createMatchRoomState(teamEntries, winScore) {
+  const ms = Object.assign({}, T_MATCH_SETTINGS_DEFAULTS, (tState && tState.matchSettings) || {});
+
   const objects = generateTMatchObjects(15, {});
   const players = {};
   teamEntries.forEach((t, i) => {
@@ -376,13 +412,13 @@ function createMatchRoomState(teamEntries, winScore) {
       name: t.name, colorIndex: i,
       x: Math.floor(Math.random() * T_GRID_SIZE), y: Math.floor(Math.random() * T_GRID_SIZE),
       direction: T_DIRECTIONS[Math.floor(Math.random() * 4)],
-      score: 0, movesLeft: 0, movesUsed: 0, movementMode: 'relative',
+      score: 0, movesLeft: 0, movesUsed: 0, movementMode: ms.movementMode,
       totalActiveMs: 0, turnScoreGained: 0, autoSkip: false, online: true
     };
   });
   const order = teamEntries.map(t => t.id).sort(() => Math.random() - 0.5);
   const first = order[0];
-  players[first].movesLeft = Math.floor(Math.random() * 10) + 1;
+  players[first].movesLeft = ms.movesPerTurn;
 
   return {
     status: 'playing', turn: 1, currentPlayer: first, playerOrder: order,
@@ -392,11 +428,15 @@ function createMatchRoomState(teamEntries, winScore) {
       // l'administrateur donne ainsi les contrôles hôte habituels (passer
       // au joueur suivant, passage automatique...) dans CHAQUE salle de
       // match, sans avoir à re-générer un jeton par match.
-      movementMode: 'relative', modeLocked: false, hostId: null, hostToken: tState.hostToken || null,
-      expectedPlayers: teamEntries.length, gameModePolicy: 'free', ghostAllowed: true,
-      minMoves: 1, maxMoves: 10, winScore: winScore, initObjects: 15,
-      turnTimeLimit: 0, trapsEnabled: false, trapCount: 0, preAssignMoves: true,
-      rejoinWindowMs: 120000
+      movementMode: ms.movementMode, modeLocked: ms.modeLocked, hostId: null, hostToken: tState.hostToken || null,
+      expectedPlayers: teamEntries.length, gameModePolicy: ms.gameModePolicy, ghostAllowed: ms.ghostAllowed,
+      minMoves: ms.movesPerTurn, maxMoves: ms.movesPerTurn, winScore: winScore, initObjects: 15,
+      turnTimeLimit: ms.turnTimeLimit, trapsEnabled: ms.trapsEnabled, trapCount: ms.trapCount, preAssignMoves: true,
+      // Plus court que le délai par défaut du jeu normal (2 min) : dans un
+      // match de tournoi ce délai n'est de toute façon qu'un filet de
+      // sécurité, closeMatchRoom() (voir plus bas) fait déjà repasser la
+      // salle en attente dès que l'orchestrateur a récupéré le score final.
+      rejoinWindowMs: 8000
     },
     gameNumber: 1, history: {}, rematchVotes: {},
     createdAt: Date.now(), turnStartedAt: Date.now()
@@ -408,6 +448,21 @@ function teamName(id) {
 }
 function mkEntries(ids) {
   return ids.map(id => ({ id, name: teamName(id) }));
+}
+
+// Fait sortir les équipes de l'écran "fin de partie" (rester/quitter) dès
+// que l'orchestrateur a récupéré le score final d'un match — sans attendre
+// le minuteur de 2 minutes du jeu normal, qui ne se déclenche de toute
+// façon JAMAIS ici : aucune équipe d'un match de tournoi n'est "hôte" de
+// sa propre salle (seul l'administrateur du tournoi l'est, via le jeton
+// hôte), donc ce vote resterait bloqué indéfiniment sans cette étape.
+// Chaque manche étant une salle à usage unique, le vote "rester/quitter"
+// n'a de toute façon pas de sens ici — on fait simplement passer la salle
+// en "salle d'attente" pour que l'écran de fin de partie se referme
+// (l'équipe retrouve alors sa propre page Tournoi, où son prochain match
+// apparaîtra dès que l'hôte l'aura créé).
+async function closeMatchRoom(roomCode) {
+  await db.ref('rooms/' + roomCode).update({ status: 'waiting', rejoinStatus: {}, rematchVotes: {} });
 }
 
 // ============================================================
@@ -457,6 +512,7 @@ async function advanceSharedPool(poolId, pool) {
           [`pools/${poolId}/rounds/${lastId}/status`]: 'done',
           [`pools/${poolId}/rounds/${lastId}/scores`]: scores
         });
+        await closeMatchRoom(last.roomCode);
       }
       return;
     }
@@ -498,6 +554,7 @@ async function advanceDuelsPool(poolId, pool) {
           [`pools/${poolId}/matches/${mid}/scoreB`]: scoreB,
           [`pools/${poolId}/matches/${mid}/winnerId`]: winnerId
         });
+        await closeMatchRoom(m.roomCode);
       }
     }
   }
@@ -581,6 +638,7 @@ async function advanceKnockoutStage() {
           [`knockout/${key}/winnerId`]: winnerId,
           [`knockout/${key}/loserId`]: loserId
         });
+        await closeMatchRoom(m.roomCode);
       }
       return;
     }
@@ -611,6 +669,7 @@ async function advanceKnockoutStage() {
         const scoreB = (roomState.players[m.teamB] || {}).score || 0;
         const winnerId = scoreA >= scoreB ? m.teamA : m.teamB;
         await tournamentRef.update({ [`knockout/${key}/status`]: 'done', [`knockout/${key}/winnerId`]: winnerId });
+        await closeMatchRoom(m.roomCode);
       }
       return;
     }
@@ -708,16 +767,58 @@ function collectActiveMatches() {
   return list;
 }
 
-async function refreshLiveMatchData() {
-  if (!isTHost() || !tState) return;
+// Écoute Firebase en temps réel (pas un simple sondage périodique) : dès
+// qu'un score change dans une salle de match suivie, la mise à jour arrive
+// immédiatement et re-dessine le panneau. La liste des salles suivies est
+// resynchronisée à chaque changement d'état du tournoi (nouvelles manches
+// créées, poule terminée...), avec un appel de sécurité toutes les 5s.
+let tLiveRoomListeners = {};  // roomCode -> callback attaché (pour se désabonner proprement)
+let tLiveTickInterval  = null;
+
+function refreshLiveMatchData() {
+  if (!isTHost() || !tState) { teardownLiveMatchListeners(); return; }
+
   const matches = collectActiveMatches();
-  const entries = await Promise.all(matches.map(async m => {
-    const snap = await db.ref('rooms/' + m.roomCode).once('value');
-    return [m.roomCode, snap.val()];
-  }));
-  tLiveRooms = Object.fromEntries(entries);
   tLiveMatchesInfo = matches;
+  const activeCodes = new Set(matches.map(m => m.roomCode));
+
+  Object.keys(tLiveRoomListeners).forEach(code => {
+    if (activeCodes.has(code)) return;
+    db.ref('rooms/' + code).off('value', tLiveRoomListeners[code]);
+    delete tLiveRoomListeners[code];
+    delete tLiveRooms[code];
+  });
+
+  activeCodes.forEach(code => {
+    if (tLiveRoomListeners[code]) return;
+    const cb = (snap) => { tLiveRooms[code] = snap.val(); renderTAdminPanel(); };
+    tLiveRoomListeners[code] = cb;
+    db.ref('rooms/' + code).on('value', cb);
+  });
+
+  // Re-dessine chaque seconde même sans nouvel événement Firebase, pour
+  // que les temps affichés (temps de tour en cours, etc.) restent vivants.
+  if (!tLiveTickInterval) {
+    tLiveTickInterval = setInterval(() => {
+      if (Object.keys(tLiveRoomListeners).length > 0) renderTAdminPanel();
+    }, 1000);
+  }
+
   renderTAdminPanel();
+}
+
+function teardownLiveMatchListeners() {
+  Object.keys(tLiveRoomListeners).forEach(code => db.ref('rooms/' + code).off('value', tLiveRoomListeners[code]));
+  tLiveRoomListeners = {};
+  tLiveRooms = {};
+  tLiveMatchesInfo = [];
+}
+
+function formatDuration(ms) {
+  const totalSec = Math.max(0, Math.floor((ms || 0) / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 // Bascule le passage automatique d'une équipe DIRECTEMENT depuis le
@@ -752,13 +853,21 @@ function renderTAdminPanel() {
       const p = players[id];
       if (!p) return '';
       const isTurn = room.currentPlayer === id;
+      const turnElapsedMs = isTurn ? Math.max(0, Date.now() - (room.turnStartedAt || Date.now())) : 0;
+      const totalMs = (p.totalActiveMs || 0) + turnElapsedMs;
       const linkIdx = linkRegistry.push(getTeamMatchLink(m.roomCode, p.name)) - 1;
       const skipIdx = skipRegistry.push({ roomCode: m.roomCode, playerId: id }) - 1;
       return `<li class="t-admin-player-row${isTurn ? ' t-admin-turn' : ''}">
-        <span class="t-admin-player-name">${isTurn ? '▶ ' : ''}${escapeTHtml(p.name)}</span>
-        <span class="t-admin-player-score">${p.score || 0} ⭐</span>
-        <label class="t-admin-autoskip"><input type="checkbox" data-skip-idx="${skipIdx}" ${p.autoSkip ? 'checked' : ''}> passer auto</label>
-        <button class="small-btn" data-link-idx="${linkIdx}" data-link-action="copy" title="Copier le lien de reconnexion de cette équipe">🔗 Lien</button>
+        <div class="t-admin-player-main">
+          <span class="t-admin-player-name">${isTurn ? '▶ ' : ''}${escapeTHtml(p.name)}</span>
+          <span class="t-admin-player-score">${p.score || 0} ⭐</span>
+          <span class="t-admin-player-time" title="Temps total de jeu (tours cumulés)">⏱ ${formatDuration(totalMs)}</span>
+          <span class="t-admin-player-time" title="Temps du tour en cours">${isTurn ? '🔄 ' + formatDuration(turnElapsedMs) : '—'}</span>
+        </div>
+        <div class="t-admin-player-controls">
+          <label class="t-admin-autoskip"><input type="checkbox" data-skip-idx="${skipIdx}" ${p.autoSkip ? 'checked' : ''}> passer auto</label>
+          <button class="small-btn" data-link-idx="${linkIdx}" data-link-action="copy" title="Copier le lien de reconnexion de cette équipe">🔗 Lien</button>
+        </div>
       </li>`;
     }).join('');
     const superviseIdx = linkRegistry.push(getMatchSuperviseLink(m.roomCode)) - 1;
