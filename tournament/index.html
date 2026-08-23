@@ -18,8 +18,9 @@
       <input type="text" id="t-team-name" placeholder="Nom de votre équipe" maxlength="16">
       <input type="text" id="t-tournament-code" placeholder="Code du tournoi (ex: TOURNOI1)" maxlength="10">
       <div class="settings-row spectator-row">
-        <label><input type="checkbox" id="t-spectator-checkbox"> 👁 Ne participe pas (organisateur / écran de projection)</label>
+        <label><input type="checkbox" id="t-spectator-checkbox"> 👁 Ne participe pas (organisateur / VPI / écran de projection)</label>
       </div>
+      <p class="hint-text">En créant un nouveau tournoi avec cette case cochée, vous devenez l'administrateur du tournoi (paramétrage, vue d'ensemble en direct, liens de secours) sans y jouer.</p>
       <button id="t-btn-join" onclick="proceedFromTLogin()">Rejoindre / Créer le tournoi</button>
       <p class="hint-text"><a href="../index.html">← Retour au jeu simple (sans tournoi)</a></p>
       <div id="t-login-error" class="error-msg"></div>
@@ -87,6 +88,8 @@
         <p id="t-my-match-status"></p>
         <button id="t-btn-join-match" style="display:none" onclick="openMyCurrentMatch()">🎮 Rejoindre mon match (nouvel onglet)</button>
       </div>
+
+      <div id="t-admin-panel" style="display:none"></div>
 
       <div id="t-bracket">
         <h2>🏆 <span id="t-dash-code"></span></h2>
