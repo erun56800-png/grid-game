@@ -40,6 +40,8 @@ let tLiveRooms       = {};  // roomCode -> dernier état lu de rooms/{roomCode} 
 let tLiveMatchesInfo  = []; // dernière liste de matchs en cours (voir collectActiveMatches)
 let myMatchWindowRef     = null; // fenêtre ouverte par openMyCurrentMatch()
 let myMatchWindowRoomCode = null; // code de salle qu'elle affiche actuellement
+let tLiveBoardRoomCode   = null; // code de salle actuellement affiché dans le plateau intégré (spectateurs)
+let tPodiumShown         = false; // évite de re-basculer sur l'écran podium à chaque redessin une fois affiché
 
 window.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
@@ -267,17 +269,49 @@ function onTStateUpdate(snap) {
 
   if (tState.status === 'registration') {
     document.getElementById('screen-t-dashboard').classList.remove('active');
+    document.getElementById('screen-t-podium').classList.remove('active');
     document.getElementById('screen-t-lobby').classList.add('active');
+    tPodiumShown = false;
     renderTLobby();
     return;
   }
 
   document.getElementById('screen-t-lobby').classList.remove('active');
-  document.getElementById('screen-t-dashboard').classList.add('active');
+
+  // Écran "podium" diffusé automatiquement à TOUS (y compris les équipes
+  // déjà éliminées ou qualifiées mais inactives) dès que le tournoi se
+  // termine — mais une seule fois : un listener Firebase "value" se
+  // redéclenche pour TOUT changement dans le sous-arbre du tournoi (par
+  // exemple une simple ligne de journal ajoutée par pushTLog), pas
+  // seulement pour le passage à "finished" — sans ce garde, un de ces
+  // rappels ultérieurs réactiverait le tableau de bord par-dessus le
+  // podium (ou annulerait le retour volontaire de quelqu'un vers le
+  // détail du tournoi).
+  if (tState.status === 'finished') {
+    if (!tPodiumShown) {
+      tPodiumShown = true;
+      renderTPodium();
+      document.getElementById('screen-t-dashboard').classList.remove('active');
+      document.getElementById('screen-t-podium').classList.add('active');
+    }
+  } else {
+    tPodiumShown = false;
+    document.getElementById('screen-t-podium').classList.remove('active');
+    document.getElementById('screen-t-dashboard').classList.add('active');
+  }
+
   renderTDashboard();
   refreshLiveMatchData();
 
   if (isTHost()) hostAdvanceTournamentIfNeeded();
+}
+
+// Permet de revenir consulter le détail du tournoi (poules, arbre complet)
+// depuis l'écran podium, sans perdre l'affichage automatique pour les
+// autres participants (chacun a son propre écran).
+function showTDashboardFromPodium() {
+  document.getElementById('screen-t-podium').classList.remove('active');
+  document.getElementById('screen-t-dashboard').classList.add('active');
 }
 
 // ============================================================
@@ -761,13 +795,17 @@ async function advanceKnockoutStage() {
   if (!(await advanceKnockoutGroup(['semi1', 'semi2'], ko))) return;
 
   // Les deux demies sont terminées : on n'enchaîne PAS automatiquement sur
-  // la finale et la petite finale — c'est désormais l'hôte qui les lance
+  // la petite finale et la finale — c'est désormais l'hôte qui les lance
   // explicitement (le temps de rassembler tout le monde autour du VPI,
-  // par exemple), via hostLaunchFinals(). L'orchestrateur se contente
-  // d'attendre ici tant que ce n'est pas fait.
-  if (!ko.final) return;
+  // par exemple), via hostLaunchFinals(). Elles sont en outre lancées
+  // SÉQUENTIELLEMENT — petite finale d'abord, puis finale — pour que toute
+  // la classe suive un seul match à la fois sur l'écran projeté.
+  // L'orchestrateur se contente d'attendre ici tant que ce n'est pas fait.
+  if (!ko.bronze) return;
+  if (!(await advanceKnockoutGroup(['bronze'], ko))) return;
 
-  if (!(await advanceKnockoutGroup(['final', 'bronze'], ko))) return;
+  if (!ko.final) return;
+  if (!(await advanceKnockoutGroup(['final'], ko))) return;
 
   const rank1 = ko.final.winnerId;
   const rank2 = ko.final.teamA === rank1 ? ko.final.teamB : ko.final.teamA;
@@ -778,38 +816,54 @@ async function advanceKnockoutStage() {
   await pushTLog('🎉 Tournoi terminé — classement final disponible !');
 }
 
-// Déclenché par un clic de l'hôte (voir renderTKnockout) une fois les deux
-// demi-finales terminées : lance explicitement la finale et la petite
-// finale — jamais automatiquement, pour laisser l'hôte rassembler tout le
-// monde (VPI, etc.) avant de démarrer.
+// Déclenché par un clic de l'hôte (voir renderTKnockout) — jamais
+// automatiquement, pour laisser l'hôte rassembler tout le monde (VPI,
+// etc.) avant de démarrer. Lance la petite finale et la finale l'une
+// après l'autre plutôt qu'ensemble : un seul clic à la fois, un seul
+// match diffusé à la fois sur l'écran projeté — la petite finale (3e/4e
+// place) d'abord, la finale ensuite une fois celle-ci terminée.
 let tLaunchFinalsInProgress = false;
 async function hostLaunchFinals() {
   if (!isTHost() || !tState) return;
   if (tLaunchFinalsInProgress) return; // évite un double-clic concurrent
   const ko = tState.knockout || {};
   if (!ko.semi1 || !ko.semi2 || ko.semi1.status !== 'done' || ko.semi2.status !== 'done') return;
-  if (ko.final) return; // déjà lancées
 
   const finalWinScore = tState.finalWinScore || T_KNOCKOUT_WIN_SCORE_DEFAULT;
-  const finalRoom  = `T-${tournamentCode}-FINAL`;
-  const bronzeRoom = `T-${tournamentCode}-BRONZE`;
+
+  let stage = null;
+  if (!ko.bronze) {
+    stage = 'bronze';
+  } else if (ko.bronze.status === 'done' && !ko.final) {
+    stage = 'final';
+  } else {
+    return; // rien à lancer pour l'instant (petite finale encore en cours, ou tout est déjà lancé)
+  }
 
   tLaunchFinalsInProgress = true;
   const btn = document.getElementById('t-btn-launch-finals');
   if (btn) btn.disabled = true;
   try {
-    await db.ref('rooms/' + finalRoom).set(createMatchRoomState(mkEntries([ko.semi1.winnerId, ko.semi2.winnerId]), finalWinScore));
-    await db.ref('rooms/' + bronzeRoom).set(createMatchRoomState(mkEntries([ko.semi1.loserId, ko.semi2.loserId]), finalWinScore));
-    await tournamentRef.update({
-      'knockout/final':  { teamA: ko.semi1.winnerId, teamB: ko.semi2.winnerId, roomCode: finalRoom,  status: 'playing' },
-      'knockout/bronze': { teamA: ko.semi1.loserId,  teamB: ko.semi2.loserId,  roomCode: bronzeRoom, status: 'playing' }
-    });
-    await pushTLog("🏆 Finale et petite finale lancées par l'hôte !");
+    if (stage === 'bronze') {
+      const bronzeRoom = `T-${tournamentCode}-BRONZE`;
+      await db.ref('rooms/' + bronzeRoom).set(createMatchRoomState(mkEntries([ko.semi1.loserId, ko.semi2.loserId]), finalWinScore));
+      await tournamentRef.update({
+        'knockout/bronze': { teamA: ko.semi1.loserId, teamB: ko.semi2.loserId, roomCode: bronzeRoom, status: 'playing' }
+      });
+      await pushTLog("🥈 Petite finale (3e/4e place) lancée par l'hôte !");
+    } else {
+      const finalRoom = `T-${tournamentCode}-FINAL`;
+      await db.ref('rooms/' + finalRoom).set(createMatchRoomState(mkEntries([ko.semi1.winnerId, ko.semi2.winnerId]), finalWinScore));
+      await tournamentRef.update({
+        'knockout/final': { teamA: ko.semi1.winnerId, teamB: ko.semi2.winnerId, roomCode: finalRoom, status: 'playing' }
+      });
+      await pushTLog("🏆 Finale lancée par l'hôte !");
+    }
   } catch (e) {
     console.error('Erreur hostLaunchFinals :', e);
     alert((e && e.code === 'PERMISSION_DENIED')
-      ? "⛔ Impossible de lancer la finale : accès à la base de données refusé (vérifiez que vous êtes bien connecté·e en tant qu'hôte)."
-      : "Erreur lors du lancement de la finale : " + (e && e.message ? e.message : e));
+      ? "⛔ Impossible de lancer ce match : accès à la base de données refusé (vérifiez que vous êtes bien connecté·e en tant qu'hôte)."
+      : "Erreur lors du lancement de ce match : " + (e && e.message ? e.message : e));
   } finally {
     tLaunchFinalsInProgress = false;
     if (btn) btn.disabled = false;
@@ -1088,10 +1142,16 @@ function renderTLiveFinalsPanel() {
   if (!section || !tState) return;
 
   const ko = tState.knockout || {};
-  const entries = [['🏆 Finale', ko.final], ['🥈 Petite finale (3e/4e place)', ko.bronze]]
+  // Petite finale d'abord, finale ensuite : même ordre que le lancement
+  // séquentiel (hostLaunchFinals) et que l'arbre (renderTKnockout).
+  const entries = [['🥈 Petite finale (3e/4e place)', ko.bronze], ['🏆 Finale', ko.final]]
     .filter(([, m]) => !!m);
 
-  if (entries.length === 0) { section.style.display = 'none'; return; }
+  if (entries.length === 0) {
+    section.style.display = 'none';
+    setLiveBoardEmbed(null);
+    return;
+  }
   section.style.display = 'block';
 
   const linkRegistry = [];
@@ -1109,16 +1169,12 @@ function renderTLiveFinalsPanel() {
       <h4>${escapeTHtml(label)}</h4>
       <p class="t-finals-teams">${teamsHtml}</p>
       <p class="t-finals-status">${statusTxt}</p>
-      <button class="small-btn" data-link-idx="${linkIdx}">👁 Suivre en direct</button>
+      <button class="small-btn" data-link-idx="${linkIdx}">↗ Ouvrir dans un nouvel onglet</button>
     </div>`;
   }).join('');
 
-  section.innerHTML = `
-    <h3>📡 Finales en direct</h3>
-    <div id="t-live-finals-matches">${html}</div>
-  `;
-
   const container = document.getElementById('t-live-finals-matches');
+  container.innerHTML = html;
   container.querySelectorAll('[data-link-idx]').forEach(el => {
     el.__link = linkRegistry[Number(el.getAttribute('data-link-idx'))];
   });
@@ -1130,6 +1186,32 @@ function renderTLiveFinalsPanel() {
       window.open(btn.__link, '_blank');
     });
   }
+
+  // Plateau intégré : montre directement la grille de jeu du match EN
+  // COURS (au plus un seul à la fois, grâce au lancement séquentiel),
+  // en plus du lien ci-dessus qui l'ouvre dans un nouvel onglet.
+  const playing = entries.map(([, m]) => m).find(m => m.status === 'playing');
+  setLiveBoardEmbed(playing ? playing.roomCode : null);
+}
+
+// Affiche/actualise le plateau intégré (iframe pointant vers le vrai jeu
+// en mode spectateur). Le src n'est modifié QUE lorsque la salle à montrer
+// change réellement — jamais à chaque simple mise à jour de score — pour
+// ne pas recharger le plateau à chaque redessin (déclenché en direct par
+// Firebase plusieurs fois par seconde).
+function setLiveBoardEmbed(roomCode) {
+  const wrap = document.getElementById('t-live-board-embed');
+  const iframe = document.getElementById('t-live-board-iframe');
+  if (!wrap || !iframe) return;
+  if (!roomCode) {
+    wrap.style.display = 'none';
+    tLiveBoardRoomCode = null;
+    return;
+  }
+  wrap.style.display = 'block';
+  if (tLiveBoardRoomCode === roomCode) return; // déjà affiché : ne pas recharger l'iframe
+  tLiveBoardRoomCode = roomCode;
+  iframe.src = getMatchSpectateLink(roomCode);
 }
 
 // ============================================================
@@ -1194,7 +1276,18 @@ function tMyStatusMessage() {
       return `${resultTxt} Préparez-vous à affronter le/la ${won ? 'vainqueur' : 'perdant·e'} de ${teamName(other.teamA)} vs ${teamName(other.teamB)} en ${nextStage} — en attente de la fin de l'autre demi-finale.`;
     }
     const opponentId = won ? other.winnerId : other.loserId;
-    return `${resultTxt} Préparez-vous à affronter ${teamName(opponentId)} en ${nextStage} — en attente que l'hôte lance les matchs.`;
+    // La petite finale est lancée en premier, la finale ensuite seulement
+    // une fois celle-ci terminée — le message précise à quelle étape on en est.
+    if (won) {
+      if (!ko.bronze) {
+        return `${resultTxt} Préparez-vous à affronter ${teamName(opponentId)} en ${nextStage} — en attente que l'hôte lance d'abord la petite finale.`;
+      }
+      if (ko.bronze.status !== 'done') {
+        return `${resultTxt} Préparez-vous à affronter ${teamName(opponentId)} en ${nextStage} — en attente de la fin de la petite finale (3e/4e place) en cours.`;
+      }
+      return `${resultTxt} Préparez-vous à affronter ${teamName(opponentId)} en ${nextStage} — en attente que l'hôte lance la finale.`;
+    }
+    return `${resultTxt} Préparez-vous à affronter ${teamName(opponentId)} en ${nextStage} — en attente que l'hôte lance la petite finale.`;
   }
 
   return '🏁 Votre parcours en phase finale est terminé — voir le classement final ci-dessous.';
@@ -1335,15 +1428,28 @@ function renderTKnockout() {
   if (!ko.semi1) { wrap.style.display = 'none'; return; }
   wrap.style.display = 'block';
 
+  // Petite finale puis finale, jamais les deux en même temps : un seul
+  // bouton de lancement à la fois, dont le libellé suit l'étape en cours.
   const semisReady = ko.semi1.status === 'done' && ko.semi2.status === 'done';
-  const launchHtml = (isTHost() && semisReady && !ko.final)
-    ? `<div class="t-bracket-launch">
-         <p class="hint-text">Les deux demi-finales sont terminées.</p>
-         <button id="t-btn-launch-finals" onclick="hostLaunchFinals()">▶ Lancer la petite finale et la finale</button>
-       </div>`
-    : (!isTHost() && semisReady && !ko.final)
-      ? `<p class="hint-text t-bracket-waiting-host">⏳ Les demi-finales sont terminées — en attente que l'hôte lance la petite finale et la finale.</p>`
-      : '';
+  const canLaunchBronze = semisReady && !ko.bronze;
+  const canLaunchFinal  = semisReady && ko.bronze && ko.bronze.status === 'done' && !ko.final;
+
+  let launchHtml = '';
+  if (canLaunchBronze) {
+    launchHtml = isTHost()
+      ? `<div class="t-bracket-launch">
+           <p class="hint-text">Les deux demi-finales sont terminées.</p>
+           <button id="t-btn-launch-finals" onclick="hostLaunchFinals()">▶ Lancer la petite finale (3e/4e place)</button>
+         </div>`
+      : `<p class="hint-text t-bracket-waiting-host">⏳ Les demi-finales sont terminées — en attente que l'hôte lance la petite finale.</p>`;
+  } else if (canLaunchFinal) {
+    launchHtml = isTHost()
+      ? `<div class="t-bracket-launch">
+           <p class="hint-text">La petite finale est terminée.</p>
+           <button id="t-btn-launch-finals" onclick="hostLaunchFinals()">▶ Lancer la finale</button>
+         </div>`
+      : `<p class="hint-text t-bracket-waiting-host">⏳ La petite finale est terminée — en attente que l'hôte lance la finale.</p>`;
+  }
 
   document.getElementById('t-knockout-list').innerHTML = `
     <div class="t-bracket-tree">
@@ -1354,9 +1460,9 @@ function renderTKnockout() {
       </div>
       <div class="t-bracket-arrow">➜</div>
       <div class="t-bracket-stage">
-        <div class="t-bracket-stage-label">Finale &amp; petite finale</div>
-        ${tBracketCardHtml('🏆 Finale', ko.final, 't-bracket-final')}
+        <div class="t-bracket-stage-label">Petite finale, puis finale</div>
         ${tBracketCardHtml('🥈 Petite finale (3e/4e)', ko.bronze, 't-bracket-bronze')}
+        ${tBracketCardHtml('🏆 Finale', ko.final, 't-bracket-final')}
       </div>
     </div>
     ${launchHtml}
@@ -1372,4 +1478,23 @@ function renderTFinalStandings() {
   list.innerHTML = [
     ['🥇', fs.rank1], ['🥈', fs.rank2], ['🥉', fs.rank3], ['4e', fs.rank4]
   ].map(([medal, id]) => `<li>${medal} ${escapeTHtml(teamName(id))}</li>`).join('');
+}
+
+// Écran plein cadre, diffusé automatiquement à tout le monde à la fin du
+// tournoi (voir onTStateUpdate) : révèle le classement dans l'ordre du
+// suspense — 4e place, puis 3e, puis 2e, puis la victoire — plutôt que de
+// livrer directement le vainqueur.
+function renderTPodium() {
+  const el = document.getElementById('t-podium-content');
+  if (!el || !tState.finalStandings) return;
+  const fs = tState.finalStandings;
+  el.innerHTML = `
+    <h2>🎉 Tournoi terminé !</h2>
+    <ol class="t-podium-list">
+      <li class="t-podium-rank t-podium-rank4"><span class="t-podium-medal">4e place</span><span class="t-podium-name">${escapeTHtml(teamName(fs.rank4))}</span></li>
+      <li class="t-podium-rank t-podium-rank3"><span class="t-podium-medal">🥉 3e place</span><span class="t-podium-name">${escapeTHtml(teamName(fs.rank3))}</span></li>
+      <li class="t-podium-rank t-podium-rank2"><span class="t-podium-medal">🥈 2e place</span><span class="t-podium-name">${escapeTHtml(teamName(fs.rank2))}</span></li>
+      <li class="t-podium-rank t-podium-rank1"><span class="t-podium-medal">🥇 Vainqueur</span><span class="t-podium-name">${escapeTHtml(teamName(fs.rank1))}</span></li>
+    </ol>
+  `;
 }

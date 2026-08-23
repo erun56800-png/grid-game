@@ -199,3 +199,64 @@
   border-radius: 8px;
   margin-bottom: 6px;
 }
+
+/* Plateau intégré — la vraie grille de jeu, en direct, directement dans
+   le panneau "finales en direct" (en plus du lien qui l'ouvre en grand
+   dans un nouvel onglet). */
+#t-live-board-embed { margin-top: 4px; }
+#t-live-board-iframe {
+  display: block;
+  width: 100%;
+  height: 520px;
+  max-height: 70vh;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  background: #1a1a2e;
+}
+
+/* Écran podium — diffusé automatiquement à tous à la fin du tournoi. */
+#screen-t-podium { align-items: center; justify-content: center; }
+#t-podium-body {
+  max-width: 480px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px;
+  text-align: center;
+}
+#t-podium-content h2 { color: #e94560; font-size: 1.6rem; margin-bottom: 20px; }
+.t-podium-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.t-podium-rank {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.05);
+  font-size: 1rem;
+}
+.t-podium-medal { color: #aaa; font-weight: bold; }
+.t-podium-name  { color: #fff; font-weight: bold; }
+.t-podium-rank3 { background: rgba(233,69,96,0.10); font-size: 1.1rem; }
+.t-podium-rank3 .t-podium-medal { color: #e94560; }
+.t-podium-rank2 { background: rgba(200,200,220,0.12); font-size: 1.25rem; }
+.t-podium-rank2 .t-podium-medal { color: #dcdcdc; }
+.t-podium-rank1 {
+  background: linear-gradient(90deg, #ffb300, #e94560);
+  font-size: 1.5rem;
+  padding: 18px 20px;
+  color: #1a1a2e;
+}
+.t-podium-rank1 .t-podium-medal,
+.t-podium-rank1 .t-podium-name { color: #1a1a2e; }
+#t-btn-podium-dashboard {
+  width: auto;
+  margin-top: 26px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+#t-btn-podium-dashboard:hover { background: rgba(255,255,255,0.16); }
