@@ -1469,13 +1469,14 @@ async function advanceTurn(objectsSnapshot, finishingId) {
 
 // ============================================================
 //  HÔTE : forcer le passage au joueur suivant en cas d'inactivité
-//  (disponible uniquement quand aucun temps limite par tour n'est configuré,
-//  puisque celui-ci gère déjà l'inactivité automatiquement).
+//  Toujours disponible, même quand un temps limite par tour est configuré :
+//  ce minuteur se déclenche depuis l'onglet du joueur actif lui-même, donc
+//  un onglet fermé, planté ou irrémédiablement bloqué ne le déclenchera
+//  jamais — ce bouton reste alors le seul recours de l'hôte.
 // ============================================================
 async function hostForceNextPlayer() {
   if (!isHost()) return;
   if (!gameState || gameState.status !== 'playing') return;
-  if (getSetting('turnTimeLimit', 0) > 0) return;
 
   const activeId = gameState.currentPlayer;
   const activePlayer = activeId ? gameState.players[activeId] : null;
@@ -1896,13 +1897,12 @@ function renderHostActivityList() {
   const activeId = gameState.currentPlayer;
   const now      = Date.now();
   const turnStartedAt = gameState.turnStartedAt || now;
-  const noTimeLimit = !(gameState.settings && gameState.settings.turnTimeLimit > 0);
 
   list.innerHTML = Object.entries(players).map(([id, p]) => {
     const isActive  = id === activeId;
     const totalMs   = (p.totalActiveMs || 0) + (isActive ? (now - turnStartedAt) : 0);
     const turnTxt   = isActive ? `🎯 tour en cours : ${formatDuration(now - turnStartedAt)}` : '';
-    const skipBtn   = (isActive && noTimeLimit)
+    const skipBtn   = isActive
       ? `<button class="small-btn" onclick="hostForceNextPlayer()" title="Forcer le passage au joueur suivant (ponctuel)">⏭ Suivant</button>`
       : '';
     // L'id du joueur est toujours un identifiant "player_slug" (voir
@@ -1918,7 +1918,7 @@ function renderHostActivityList() {
     </div>`;
   }).join('');
 
-  if (hint) hint.style.display = noTimeLimit ? 'block' : 'none';
+  if (hint) hint.style.display = 'block';
 }
 
 // Barre rapide toujours visible pour l'hôte (au-dessus du plateau), pour ne pas
@@ -1945,9 +1945,8 @@ function renderHostQuickBar() {
       : '⏱ -';
   }
 
-  const noTimeLimit = !(gameState.settings && gameState.settings.turnTimeLimit > 0);
   const skipBtn = document.getElementById('host-quick-skip-btn');
-  if (skipBtn) skipBtn.style.display = noTimeLimit ? 'inline-block' : 'none';
+  if (skipBtn) skipBtn.style.display = 'inline-block';
 
   const autoSkipCb = document.getElementById('host-quick-autoskip-checkbox');
   if (autoSkipCb && document.activeElement !== autoSkipCb) {
