@@ -190,7 +190,10 @@ async function copyTInviteLink() {
 // son terminal plante ou perd la connexion en cours de tournoi).
 function getTeamMatchLink(roomCode, teamNameStr) {
   const url = new URL('../index.html', location.href);
-  url.searchParams.set('room', roomCode);
+  // game.js met TOUJOURS le code de salle en majuscules avant de le
+  // chercher dans Firebase (sensible à la casse) — on s'aligne ici pour
+  // que le lien fonctionne quelle que soit la casse du roomCode stocké.
+  url.searchParams.set('room', String(roomCode).toUpperCase());
   url.searchParams.set('name', teamNameStr);
   return url.toString();
 }
@@ -199,7 +202,7 @@ function getTeamMatchLink(roomCode, teamNameStr) {
 // suivant, passage automatique...) dans cette partie précisément.
 function getMatchSuperviseLink(roomCode) {
   const url = new URL('../index.html', location.href);
-  url.searchParams.set('room', roomCode);
+  url.searchParams.set('room', String(roomCode).toUpperCase());
   url.searchParams.set('host', (tState && tState.hostToken) || myHostToken || '');
   return url.toString();
 }
@@ -209,7 +212,7 @@ function getMatchSuperviseLink(roomCode) {
 // terminal, sans les contrôles hôte.
 function getMatchSpectateLink(roomCode) {
   const url = new URL('../index.html', location.href);
-  url.searchParams.set('room', roomCode);
+  url.searchParams.set('room', String(roomCode).toUpperCase());
   url.searchParams.set('spectator', '1');
   return url.toString();
 }
@@ -643,7 +646,13 @@ async function advanceDuelsPool(poolId, pool) {
     const m = matches[mid];
     if (m.status !== 'pending') continue;
     if (busyTeams.has(m.teamA) || busyTeams.has(m.teamB)) continue;
-    const roomCode = `T-${tournamentCode}-P${poolId}-${mid}`;
+    // game.js met TOUJOURS en majuscules le code de salle saisi (à la main
+    // ou via l'URL — voir roomParam.toUpperCase() dans son DOMContentLoaded)
+    // avant de le chercher dans Firebase, qui est sensible à la casse. Le
+    // code généré ici doit donc être en majuscules dès le départ (mid, lui,
+    // reste en minuscules : ce n'est qu'une clé interne du tournoi, jamais
+    // utilisée comme code de salle tel quel).
+    const roomCode = `T-${tournamentCode}-P${poolId}-${mid}`.toUpperCase();
     await db.ref('rooms/' + roomCode).set(createMatchRoomState(mkEntries([m.teamA, m.teamB]), tState.poolWinScore));
     await tournamentRef.update({
       [`pools/${poolId}/matches/${mid}/roomCode`]: roomCode,
@@ -810,7 +819,7 @@ function openMyCurrentMatch() {
   const roomCode = findMyCurrentMatch();
   if (!roomCode) return;
   const url = new URL('../index.html', location.href);
-  url.searchParams.set('room', roomCode);
+  url.searchParams.set('room', String(roomCode).toUpperCase());
   url.searchParams.set('name', myTeamName);
   window.open(url.toString(), '_blank');
 }
