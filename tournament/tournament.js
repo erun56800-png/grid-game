@@ -412,13 +412,20 @@ function createMatchRoomState(teamEntries, winScore) {
       name: t.name, colorIndex: i,
       x: Math.floor(Math.random() * T_GRID_SIZE), y: Math.floor(Math.random() * T_GRID_SIZE),
       direction: T_DIRECTIONS[Math.floor(Math.random() * 4)],
-      score: 0, movesLeft: 0, movesUsed: 0, movementMode: ms.movementMode,
+      // Comme dans le jeu normal (voir joinExistingRoom/randomMovesFromSettings
+      // dans game.js), CHAQUE joueur reçoit ses déplacements dès la création
+      // de la salle — pas seulement celui qui commence. Sans ça, un joueur
+      // qui n'est pas tiré au sort en premier arrive à son tour avec 0
+      // déplacement et ne peut plus rien faire (le mécanisme de
+      // "pré-attribution" ne donne des déplacements qu'au joueur qui VIENT
+      // de terminer un tour, pour son tour SUIVANT — un joueur qui n'a
+      // jamais encore joué n'en a donc jamais reçu).
+      score: 0, movesLeft: ms.movesPerTurn, movesUsed: 0, movementMode: ms.movementMode,
       totalActiveMs: 0, turnScoreGained: 0, autoSkip: false, online: true
     };
   });
   const order = teamEntries.map(t => t.id).sort(() => Math.random() - 0.5);
   const first = order[0];
-  players[first].movesLeft = ms.movesPerTurn;
 
   return {
     status: 'playing', turn: 1, currentPlayer: first, playerOrder: order,
