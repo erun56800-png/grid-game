@@ -112,10 +112,16 @@ async function proceedFromTLogin() {
 
       if (hostTokenParam && state.hostToken === hostTokenParam) {
         myHostToken = hostTokenParam;
-      } else {
-        // Pas de lien hôte dans l'URL (retour via nom + code de tournoi) :
-        // on tente de retrouver le jeton précédemment mémorisé sur cet
-        // appareil pour ce tournoi.
+      } else if (amSpectator) {
+        // Pas de lien hôte dans l'URL, mais reconnexion en tant
+        // qu'organisateur/spectateur (case "Ne participe pas") : on tente
+        // de retrouver le jeton précédemment mémorisé sur cet appareil pour
+        // ce tournoi. IMPORTANT : ce repli ne s'applique QUE côté
+        // spectateur — localStorage est partagé par TOUS les onglets d'un
+        // même navigateur, donc si on l'appliquait aussi à une inscription
+        // d'équipe, n'importe quel élève ouvrant un nouvel onglet sur un
+        // ordinateur déjà utilisé par l'hôte hériterait silencieusement des
+        // droits d'administrateur en tapant juste son nom d'équipe.
         const saved = loadSavedTHostToken(tournamentCode);
         if (saved && state.hostToken === saved) myHostToken = saved;
       }
