@@ -140,7 +140,14 @@
 
       <div id="t-admin-panel" style="display:none"></div>
 
-      <div id="t-live-finals-panel" style="display:none"></div>
+      <div id="t-live-finals-panel" style="display:none">
+        <h3>📡 Finales en direct</h3>
+        <div id="t-live-finals-matches"></div>
+        <div id="t-live-board-embed" style="display:none">
+          <p class="hint-text">🎮 Plateau en direct :</p>
+          <iframe id="t-live-board-iframe" title="Plateau de jeu en direct" loading="lazy"></iframe>
+        </div>
+      </div>
 
       <div id="t-bracket">
         <h2>🏆 <span id="t-dash-code"></span></h2>
@@ -158,6 +165,14 @@
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- ÉCRAN PODIUM (affiché automatiquement à tous, dès la fin du tournoi) -->
+  <div id="screen-t-podium" class="screen">
+    <div id="t-podium-body">
+      <div id="t-podium-content"></div>
+      <button id="t-btn-podium-dashboard" onclick="showTDashboardFromPodium()">📋 Voir le détail du tournoi</button>
     </div>
   </div>
 
