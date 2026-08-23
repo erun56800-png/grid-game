@@ -79,10 +79,17 @@
   margin-bottom: 12px;
 }
 .t-pool-card h4 { color: #fff; font-size: 0.95rem; margin-bottom: 4px; }
+.t-standings-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #888;
+  margin-top: 10px;
+}
 .t-standings {
   list-style: decimal;
   padding-left: 20px;
-  margin-top: 8px;
+  margin-top: 4px;
   font-size: 0.85rem;
   color: #ddd;
 }
@@ -145,6 +152,40 @@
 .t-bracket-match-status { font-size: 0.8rem; color: #aaa; }
 .t-bracket-match.t-bracket-playing .t-bracket-match-status { color: #ffb300; }
 .t-bracket-match.t-bracket-done    .t-bracket-match-status { color: #4caf50; }
+
+.t-bracket-launch {
+  text-align: center;
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(255,179,0,0.08);
+  border: 1px solid rgba(255,179,0,0.35);
+  border-radius: 8px;
+}
+.t-bracket-launch button { width: auto; padding: 10px 20px; }
+.t-bracket-waiting-host { text-align: center; margin-top: 12px; }
+
+/* Panneau "finales en direct" — visible de toutes les équipes, pas
+   seulement l'hôte, une fois la petite finale/finale lancées. */
+#t-live-finals-panel {
+  background: rgba(233,69,96,0.08);
+  border: 1px solid rgba(233,69,96,0.35);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+#t-live-finals-panel h3 { color: #e94560; margin-bottom: 10px; border: none; }
+.t-finals-card {
+  background: rgba(255,255,255,0.05);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.t-finals-card h4 { color: #fff; font-size: 0.92rem; margin-bottom: 4px; }
+.t-finals-teams { font-size: 0.95rem; color: #ddd; margin-bottom: 4px; }
+.t-finals-team.t-finals-turn { color: #ffb300; font-weight: bold; }
+.t-finals-vs { color: #888; font-size: 0.85rem; }
+.t-finals-status { font-size: 0.85rem; color: #ffb300; margin-bottom: 8px; }
+.t-finals-card .small-btn { width: auto; padding: 6px 14px; }
 
 #t-final-standings-list {
   list-style: none;
