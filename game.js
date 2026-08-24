@@ -297,7 +297,7 @@ async function createRoomWithSettings() {
 
   const initialState = createInitialState(settings);
   if (!amSpectator) {
-    initialState.players[myId] = createPlayer(myName, 0, movementMode);
+    initialState.players[myId] = createPlayer(myName, 0, movementMode, initialState.traps);
   }
 
   await roomRef.set(initialState);
@@ -323,7 +323,7 @@ async function joinExistingRoom(state, candidateId, existingPlayer) {
     const playerCount = Object.keys(state.players || {}).length;
     const colorIndex  = playerCount % PLAYER_COLORS.length;
     const defaultMode = (state.settings && state.settings.movementMode) || 'relative';
-    const newPlayer   = createPlayer(myName, colorIndex, defaultMode);
+    const newPlayer   = createPlayer(myName, colorIndex, defaultMode, state.traps);
 
     if (state.status === 'playing') {
       const preAssign = state.settings ? state.settings.preAssignMoves !== false : true;
@@ -677,12 +677,13 @@ function createInitialState(settings) {
   };
 }
 
-function createPlayer(name, colorIndex, movementMode) {
+function createPlayer(name, colorIndex, movementMode, traps) {
+  const spawn = pickSafeSpawn(traps);
   return {
     name:         name,
     colorIndex:   colorIndex,
-    x:            Math.floor(Math.random() * GRID_SIZE),
-    y:            Math.floor(Math.random() * GRID_SIZE),
+    x:            spawn.x,
+    y:            spawn.y,
     direction:    DIRECTIONS[Math.floor(Math.random() * 4)],
     score:        0,
     movesLeft:    0,
@@ -732,6 +733,31 @@ function generateTraps(count, avoidObjects) {
     }
   }
   return traps;
+}
+
+// Un joueur placé en (x,y) est-il "encerclé" par les pièges ? — vrai si
+// TOUTES ses cases voisines valides (Nord/Sud/Est/Ouest, dans les limites
+// du plateau) sont des pièges, auquel cas aucun déplacement (quelle que
+// soit la direction, y compris après une rotation en mode relatif) n'est
+// possible sans en déclencher un dès le premier tour.
+function hasSafeNeighbor(x, y, traps) {
+  const t = traps || {};
+  const neighbors = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]
+    .filter(([nx, ny]) => nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE);
+  return neighbors.length === 0 || neighbors.some(([nx, ny]) => !t[`${nx}_${ny}`]);
+}
+
+// Choisit une position de départ aléatoire pour un joueur en évitant qu'il
+// n'apparaisse totalement encerclé par des pièges. Se rabat sur un tirage
+// classique si le plateau est exceptionnellement saturé de pièges (aucune
+// case satisfaisante trouvée après un nombre raisonnable d'essais).
+function pickSafeSpawn(traps) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const x = Math.floor(Math.random() * GRID_SIZE);
+    const y = Math.floor(Math.random() * GRID_SIZE);
+    if (hasSafeNeighbor(x, y, traps)) return { x, y };
+  }
+  return { x: Math.floor(Math.random() * GRID_SIZE), y: Math.floor(Math.random() * GRID_SIZE) };
 }
 
 // ============================================================
@@ -881,12 +907,21 @@ async function startRound() {
   const modeLocked  = getSetting('modeLocked', false);
   const imposedMode = getSetting('movementMode', 'relative');
 
+  // Pièges et objets générés AVANT le placement des joueurs, pour pouvoir
+  // choisir la position de chacun en évitant qu'il n'apparaisse encerclé
+  // par des pièges (voir pickSafeSpawn).
+  const newObjects   = generateObjects(currentInitObjects(), {});
+  const trapsEnabled = getSetting('trapsEnabled', false);
+  const trapCount    = getSetting('trapCount', DEFAULT_TRAP_COUNT);
+  const newTraps      = trapsEnabled ? generateTraps(trapCount, newObjects) : {};
+
   const resetPlayers = {};
   ids.forEach(id => {
+    const spawn = pickSafeSpawn(newTraps);
     resetPlayers[id] = {
       ...players[id],
-      x:             Math.floor(Math.random() * GRID_SIZE),
-      y:             Math.floor(Math.random() * GRID_SIZE),
+      x:             spawn.x,
+      y:             spawn.y,
       direction:     DIRECTIONS[Math.floor(Math.random() * 4)],
       score:         0,
       movesUsed:     0,
@@ -904,11 +939,6 @@ async function startRound() {
 
   const hasHistory = Object.keys(gameState.history || {}).length > 0;
   const gameNumber  = hasHistory ? (gameState.gameNumber || 1) + 1 : (gameState.gameNumber || 1);
-
-  const newObjects   = generateObjects(currentInitObjects(), {});
-  const trapsEnabled = getSetting('trapsEnabled', false);
-  const trapCount    = getSetting('trapCount', DEFAULT_TRAP_COUNT);
-  const newTraps      = trapsEnabled ? generateTraps(trapCount, newObjects) : {};
 
   const updates = {
     status:        'playing',
