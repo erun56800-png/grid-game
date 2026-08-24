@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chasseurs d'Étoiles</title>
+  <title>Cod@prim</title>
   <link rel="stylesheet" href="style.css">
   <!-- Bibliothèque QR embarquée localement (plus de dépendance à un CDN externe,
        qui peut être bloqué sur certains réseaux d'établissement scolaire). -->
@@ -14,8 +14,9 @@
   <!-- ÉCRAN D'ACCUEIL -->
   <div id="screen-login" class="screen active">
     <div class="login-box">
-      <h1>⭐ Chasseurs d'Étoiles</h1>
-      <p>Collectez des objets pour gagner !</p>
+      <h1>🎮 Cod@prim</h1>
+      <p>Collectez des étoiles ⭐ sur le plateau pour gagner !</p>
+      <p class="hint-text">Une application de la <strong>Mission Numérique du Morbihan</strong></p>
       <input type="text" id="player-name" placeholder="Votre pseudo" maxlength="12">
       <input type="text" id="room-code" placeholder="Code de partie (ex: ROOM1)" maxlength="8">
       <div class="settings-row spectator-row">
@@ -23,6 +24,7 @@
       </div>
       <button id="btn-join" onclick="proceedFromLogin()">Rejoindre / Créer une partie</button>
       <button class="small-btn" onclick="openHistoryScreen()">📜 Historique des salles</button>
+      <p class="hint-text"><a href="tournament/index.html">🏆 Mode tournoi (plusieurs équipes, poules, finales)</a></p>
 
       <div id="host-settings" style="display:none">
         <h3>🎉 Nouvelle salle — configurons-la</h3>

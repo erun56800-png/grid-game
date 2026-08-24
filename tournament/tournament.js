@@ -1,5 +1,5 @@
 // ============================================================
-//  MODE TOURNOI — Chasseurs d'Étoiles
+//  MODE TOURNOI — Cod@prim
 //
 //  Ce fichier est INDÉPENDANT du jeu principal (game.js n'est jamais
 //  chargé ici) : les parties de tournoi sont de simples salles
