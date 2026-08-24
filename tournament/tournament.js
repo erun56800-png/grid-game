@@ -219,6 +219,48 @@ async function copyTInviteLink() {
   } catch (e) { window.prompt('Copiez ce lien :', getTInviteLink()); }
 }
 
+// ============================================================
+//  QR CODE (écran d'inscription du tournoi) — copie indépendante de
+//  renderQRCode() du jeu normal (voir game.js), tournament.js restant
+//  volontairement indépendant de game.js. Réutilise la même bibliothèque
+//  déjà chargée (vendor/qrcode.js) et les mêmes styles (#lobby-qrcode-wrap
+//  / #lobby-qrcode, partagés avec le jeu simple dans style.css).
+// ============================================================
+function renderTQRCode() {
+  const container = document.getElementById('lobby-qrcode');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (typeof qrcode === 'undefined') {
+    container.classList.add('qr-unavailable');
+    container.innerHTML = `
+      <p class="qr-fallback-msg">📵 QR code indisponible<br>(bibliothèque non chargée)</p>
+      <p class="qr-fallback-msg">Utilisez le lien ci-dessus à la place.</p>
+    `;
+    console.warn('QR code : la bibliothèque qrcode (vendor/qrcode.js) n\'est pas chargée.');
+    return;
+  }
+
+  try {
+    container.classList.remove('qr-unavailable');
+    const qr = qrcode(0, 'H');
+    qr.addData(getTInviteLink());
+    qr.make();
+
+    container.innerHTML = qr.createSvgTag({ scalable: true });
+    const svg = container.querySelector('svg');
+    if (svg) {
+      svg.style.width  = '150px';
+      svg.style.height = '150px';
+      svg.style.display = 'block';
+    }
+  } catch (e) {
+    container.classList.add('qr-unavailable');
+    container.innerHTML = `<p class="qr-fallback-msg">📵 QR code indisponible<br>Utilisez le lien ci-dessus.</p>`;
+    console.warn('QR code : erreur lors de la génération.', e);
+  }
+}
+
 // Lien de reconnexion d'une équipe à SA salle de match (à communiquer si
 // son terminal plante ou perd la connexion en cours de tournoi).
 function getTeamMatchLink(roomCode, teamNameStr) {
@@ -328,6 +370,7 @@ function renderTLobby() {
   document.getElementById('t-lobby-code').textContent = tournamentCode;
   const linkInput = document.getElementById('t-lobby-invite-link');
   if (linkInput) linkInput.value = getTInviteLink();
+  renderTQRCode();
 
   const teams = tState.teams || {};
   const list = document.getElementById('t-lobby-team-list');
