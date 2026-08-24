@@ -469,6 +469,38 @@ function generateTMatchObjects(count, avoidKeys) {
   return objects;
 }
 
+// Copie indépendante de generateTraps/hasSafeNeighbor/pickSafeSpawn du jeu
+// normal (voir game.js) — même logique, pour les mêmes raisons : les
+// pièges d'un match de tournoi ne doivent ni se superposer aux étoiles, ni
+// encercler totalement une équipe dès son placement de départ.
+function generateTMatchTraps(count, avoidObjects) {
+  const traps = {};
+  const avoid = avoidObjects || {};
+  let placed = 0, attempts = 0;
+  while (placed < count && attempts < 500) {
+    attempts++;
+    const x = Math.floor(Math.random() * T_GRID_SIZE);
+    const y = Math.floor(Math.random() * T_GRID_SIZE);
+    const key = `${x}_${y}`;
+    if (!avoid[key] && !traps[key]) { traps[key] = true; placed++; }
+  }
+  return traps;
+}
+function hasSafeTNeighbor(x, y, traps) {
+  const t = traps || {};
+  const neighbors = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]
+    .filter(([nx, ny]) => nx >= 0 && nx < T_GRID_SIZE && ny >= 0 && ny < T_GRID_SIZE);
+  return neighbors.length === 0 || neighbors.some(([nx, ny]) => !t[`${nx}_${ny}`]);
+}
+function pickSafeTSpawn(traps) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const x = Math.floor(Math.random() * T_GRID_SIZE);
+    const y = Math.floor(Math.random() * T_GRID_SIZE);
+    if (hasSafeTNeighbor(x, y, traps)) return { x, y };
+  }
+  return { x: Math.floor(Math.random() * T_GRID_SIZE), y: Math.floor(Math.random() * T_GRID_SIZE) };
+}
+
 // Valeurs par défaut si le tournoi a été créé avant l'ajout du
 // paramétrage (matchSettings absent) ou si un champ n'a pas été soumis.
 const T_MATCH_SETTINGS_DEFAULTS = {
@@ -482,11 +514,13 @@ function createMatchRoomState(teamEntries, winScore) {
   const ms = Object.assign({}, T_MATCH_SETTINGS_DEFAULTS, (tState && tState.matchSettings) || {});
 
   const objects = generateTMatchObjects(15, {});
+  const traps = ms.trapsEnabled ? generateTMatchTraps(ms.trapCount, objects) : {};
   const players = {};
   teamEntries.forEach((t, i) => {
+    const spawn = pickSafeTSpawn(traps);
     players[t.id] = {
       name: t.name, colorIndex: i,
-      x: Math.floor(Math.random() * T_GRID_SIZE), y: Math.floor(Math.random() * T_GRID_SIZE),
+      x: spawn.x, y: spawn.y,
       direction: T_DIRECTIONS[Math.floor(Math.random() * 4)],
       // Comme dans le jeu normal (voir joinExistingRoom/randomMovesFromSettings
       // dans game.js), CHAQUE joueur reçoit ses déplacements dès la création
@@ -505,7 +539,7 @@ function createMatchRoomState(teamEntries, winScore) {
 
   return {
     status: 'playing', turn: 1, currentPlayer: first, playerOrder: order,
-    players, objects, traps: {}, log: {},
+    players, objects, traps, log: {},
     settings: {
       // hostToken reprend celui du tournoi : le lien "Superviser" de
       // l'administrateur donne ainsi les contrôles hôte habituels (passer
