@@ -139,6 +139,8 @@
         <button class="small-btn" onclick="copyHostLink()">🔑 Copier le lien de reconfiguration totale</button>
         <div id="lobby-host-link-feedback" class="link-feedback"></div>
         <p class="hint-text">Ce lien vous redonne les pleins pouvoirs sur cette salle (même en spectateur ou depuis un autre appareil). Gardez-le secret.</p>
+        <button class="small-btn" id="lobby-toggle-status-btn" onclick="hostToggleOwnStatus()"></button>
+        <p class="hint-text">Basculez à tout moment entre organisateur spectateur (affichage projeté) et joueur actif.</p>
       </div>
       <div id="lobby-wait-msg" style="display:none">
         <div class="spinner"></div>
@@ -210,6 +212,8 @@
               <button class="small-btn" onclick="copyHostLink()">🔗 Copier le lien de reconfiguration totale</button>
               <div id="host-link-feedback" class="link-feedback"></div>
               <p class="hint-text">Ce lien vous redonne les pleins pouvoirs sur cette salle (même en spectateur ou depuis un autre appareil). Gardez-le secret.</p>
+              <button class="small-btn" id="host-toggle-status-btn" onclick="hostToggleOwnStatus()"></button>
+              <p class="hint-text">Basculez à tout moment entre organisateur spectateur (affichage projeté) et joueur actif.</p>
             </div>
 
             <div class="host-section">
