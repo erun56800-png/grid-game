@@ -410,6 +410,96 @@ async function enterAsSpectator() {
   startHostActivityTicker();
 }
 
+// ============================================================
+//  HÔTE : bascule joueur actif ↔ spectateur, à la demande
+// ============================================================
+// Permet à l'hôte de changer d'avis à tout moment (depuis la salle
+// d'attente ou en pleine partie) sans devoir recréer la salle : rejoindre
+// comme joueur actif, ou redevenir spectateur (utile pour un affichage
+// projeté en classe). Le lien de reconfiguration reste valable dans les
+// deux cas : `settings/hostId` est tenu à jour pour refléter le nouveau
+// statut, et la page est rechargée via ce même lien pour repartir sur le
+// parcours de connexion habituel (déjà testé) plutôt que de retoucher
+// l'interface à la main.
+async function hostToggleOwnStatus() {
+  if (!isHost() || !gameState) return;
+  if (amSpectator) {
+    await hostBecomePlayer();
+  } else {
+    await hostBecomeSpectator();
+  }
+}
+
+async function hostBecomePlayer() {
+  if (!isHost() || !amSpectator || !roomRef) return;
+
+  let name = myName;
+  if (!name) {
+    name = ((window.prompt('Choisissez le pseudo à utiliser en tant que joueur :', '') || '')).trim();
+    if (!name) return;
+  }
+  const candidateId = playerIdFor(name);
+  if (gameState.players && gameState.players[candidateId]) {
+    window.alert("Ce pseudo est déjà utilisé par un joueur de cette salle. Choisissez-en un autre.");
+    return;
+  }
+
+  const playerCount = Object.keys(gameState.players || {}).length;
+  const colorIndex  = playerCount % PLAYER_COLORS.length;
+  const defaultMode = (gameState.settings && gameState.settings.movementMode) || 'relative';
+  const newPlayer   = createPlayer(name, colorIndex, defaultMode, gameState.traps);
+
+  if (gameState.status === 'playing') {
+    const preAssign = gameState.settings ? gameState.settings.preAssignMoves !== false : true;
+    if (preAssign) newPlayer.movesLeft = randomMovesFromSettings(gameState.settings);
+  }
+
+  await roomRef.child('players/' + candidateId).set(newPlayer);
+  await roomRef.child('settings/hostId').set(candidateId);
+
+  if (gameState.status === 'playing') {
+    const newOrder = [...(gameState.playerOrder || []), candidateId];
+    await roomRef.child('playerOrder').set(newOrder);
+    await pushLog(`🎮 ${name} (organisateur) rejoint la partie en tant que joueur.`);
+  } else {
+    await pushLog(`🎮 ${name} (organisateur) devient joueur actif.`);
+  }
+
+  // Recharge via le lien hôte : reconnecte proprement en tant que joueur
+  // (parcours déjà utilisé pour toute reconnexion via ce lien).
+  location.href = getHostLink();
+}
+
+async function hostBecomeSpectator() {
+  if (!isHost() || amSpectator || !myId || !roomRef) return;
+
+  const players = gameState.players || {};
+  if (Object.keys(players).length <= 1) {
+    window.alert("Vous êtes le seul joueur actif : redevenir spectateur mettrait la partie en pause sans aucun joueur. Ajoutez un autre joueur avant de basculer.");
+    return;
+  }
+  if (!window.confirm(`Redevenir spectateur ? Vous quitterez la partie en tant que joueur « ${myName} » (votre score sera perdu).`)) return;
+
+  const removedId   = myId;
+  const removedName = myName;
+  const wasMyTurn    = gameState.status === 'playing' && gameState.currentPlayer === removedId;
+  const orderBeforeRemoval = gameState.playerOrder || [];
+
+  // Passe la main AVANT de retirer la fiche joueur (advanceTurn() a besoin
+  // de la retrouver dans gameState.players pour clôturer le tour proprement).
+  if (wasMyTurn) {
+    await advanceTurn(gameState.objects, removedId);
+  }
+
+  await roomRef.child('players/' + removedId).remove();
+  await roomRef.child('playerOrder').set(orderBeforeRemoval.filter(id => id !== removedId));
+  await roomRef.child('settings/hostId').set(null);
+  await pushLog(`👁 ${removedName} (organisateur) redevient spectateur.`);
+
+  // Recharge via le lien hôte : reconnecte proprement en tant que spectateur.
+  location.href = getHostLink();
+}
+
 function startHostActivityTicker() {
   clearInterval(hostActivityInterval);
   hostActivityInterval = setInterval(() => {
@@ -880,6 +970,10 @@ function renderLobby() {
   if (isHost()) {
     hostControls.style.display = 'block';
     waitMsg.style.display = 'none';
+    const toggleBtn = document.getElementById('lobby-toggle-status-btn');
+    if (toggleBtn) {
+      toggleBtn.textContent = amSpectator ? '🎮 Devenir joueur actif' : '👁 Redevenir spectateur';
+    }
   } else {
     hostControls.style.display = 'none';
     waitMsg.style.display = 'block';
@@ -1914,6 +2008,11 @@ function renderHostPanel() {
     return;
   }
   panel.style.display = 'block';
+
+  const toggleBtn = document.getElementById('host-toggle-status-btn');
+  if (toggleBtn) {
+    toggleBtn.textContent = amSpectator ? '🎮 Devenir joueur actif' : '👁 Redevenir spectateur';
+  }
 
   const settings = gameState.settings || {};
   setIfNotFocused('host-mode-locked', !!settings.modeLocked, 'checked');
