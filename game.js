@@ -1864,8 +1864,23 @@ const HOST_SETTING_LABELS = {
   gameModePolicy: "politique d'interaction (direct/différé)",
   ghostAllowed:   'aperçu fantôme autorisé',
   turnTimeLimit:  'temps limite par tour',
-  rejoinWindowMs: 'durée pour rejoindre une nouvelle partie'
+  rejoinWindowMs: 'durée pour rejoindre une nouvelle partie',
+  winScore:       'objectif (objets pour gagner)',
+  initObjects:    "nombre d'objets sur le plateau",
+  minMoves:       'déplacements minimum par tour',
+  maxMoves:       'déplacements maximum par tour',
+  trapsEnabled:   'pièges activés',
+  trapCount:      'nombre de pièges'
 };
+
+// Coche/décoche l'activation des pièges depuis le panneau de l'hôte : met
+// à jour le réglage ET affiche/masque le champ "nombre de pièges" dans la
+// foulée (même esprit que toggleTrapCountRow() sur l'écran de création).
+async function hostToggleTrapsEnabled(checked) {
+  await hostUpdateSetting('trapsEnabled', checked);
+  const row = document.getElementById('host-trap-count-row');
+  if (row) row.style.display = checked ? 'block' : 'none';
+}
 
 async function hostUpdateSetting(key, value) {
   if (!isHost()) return;
@@ -1909,6 +1924,14 @@ function renderHostPanel() {
   setIfNotFocused('host-ghost-allowed', settings.ghostAllowed !== false, 'checked');
   setIfNotFocused('host-turn-time-limit', settings.turnTimeLimit || 0);
   setIfNotFocused('host-rejoin-window', Math.round((settings.rejoinWindowMs || DEFAULT_REJOIN_WINDOW_MS) / 1000));
+  setIfNotFocused('host-win-score', settings.winScore || DEFAULT_WIN_SCORE);
+  setIfNotFocused('host-init-objects', settings.initObjects || DEFAULT_INIT_OBJECTS);
+  setIfNotFocused('host-min-moves', settings.minMoves || DEFAULT_MIN_MOVES);
+  setIfNotFocused('host-max-moves', settings.maxMoves || DEFAULT_MAX_MOVES);
+  setIfNotFocused('host-traps-enabled', !!settings.trapsEnabled, 'checked');
+  const hostTrapRow = document.getElementById('host-trap-count-row');
+  if (hostTrapRow) hostTrapRow.style.display = settings.trapsEnabled ? 'block' : 'none';
+  setIfNotFocused('host-trap-count', settings.trapCount != null ? settings.trapCount : DEFAULT_TRAP_COUNT);
 
   renderHostActivityList();
 }

@@ -259,6 +259,44 @@
             </div>
 
             <div class="host-section">
+              <h4>🎯 Objectif &amp; plateau</h4>
+              <div class="settings-row">
+                <label>Objets pour gagner
+                  <input type="number" id="host-win-score" min="1" onchange="hostUpdateSetting('winScore', parseInt(this.value)||20)">
+                </label>
+              </div>
+              <div class="settings-row">
+                <label>Nombre d'objets sur le plateau
+                  <input type="number" id="host-init-objects" min="1" onchange="hostUpdateSetting('initObjects', parseInt(this.value)||15)">
+                </label>
+              </div>
+              <div class="settings-row">
+                <label>Déplacements minimum par tour
+                  <input type="number" id="host-min-moves" min="1" onchange="hostUpdateSetting('minMoves', parseInt(this.value)||1)">
+                </label>
+              </div>
+              <div class="settings-row">
+                <label>Déplacements maximum par tour
+                  <input type="number" id="host-max-moves" min="1" onchange="hostUpdateSetting('maxMoves', parseInt(this.value)||10)">
+                </label>
+              </div>
+              <p class="step-hint">Ces réglages ne changent pas la partie en cours (les objets déjà placés restent) : ils s'appliquent au prochain lancement (revanche ou nouvelle salle).</p>
+            </div>
+
+            <div class="host-section">
+              <h4>❌ Pièges</h4>
+              <div class="settings-row">
+                <label><input type="checkbox" id="host-traps-enabled" onchange="hostToggleTrapsEnabled(this.checked)"> Activer les pièges</label>
+              </div>
+              <div class="settings-row" id="host-trap-count-row" style="display:none">
+                <label>Nombre de pièges
+                  <input type="number" id="host-trap-count" min="0" onchange="hostUpdateSetting('trapCount', parseInt(this.value)||0)">
+                </label>
+              </div>
+              <p class="step-hint">Comme ci-dessus, s'applique au prochain lancement, pas à la partie en cours.</p>
+            </div>
+
+            <div class="host-section">
               <h4>👥 Activité des joueurs</h4>
               <div id="host-activity-list"></div>
               <p class="step-hint" id="host-skip-hint" style="display:none">Utilisez ⏭ pour forcer le passage au joueur suivant en cas d'inactivité prolongée (même si un temps limite par tour est configuré, au cas où il ne se déclencherait pas — onglet fermé, par exemple).</p>
