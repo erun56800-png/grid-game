@@ -283,8 +283,8 @@ function getMatchSuperviseLink(roomCode) {
 }
 // Lien "spectateur" vers une salle de match précise : permet à n'importe
 // quelle équipe (éliminée, qualifiée mais inactive, ou simplement en
-// attente) de suivre en direct la finale/petite finale sur son propre
-// terminal, sans les contrôles hôte.
+// attente de son prochain match) de suivre en direct un match en cours
+// (poule ou finale) sur son propre terminal, sans les contrôles hôte.
 function getMatchSpectateLink(roomCode) {
   const url = new URL('../index.html', location.href);
   url.searchParams.set('room', String(roomCode).toUpperCase());
@@ -1102,11 +1102,11 @@ function refreshLiveMatchData() {
 }
 
 // Regroupe tout ce qui dépend des données live (tLiveRooms) : le panneau
-// admin, le panneau "finales en direct" pour tout le monde, et les
+// admin, le panneau "matchs en cours" pour tout le monde, et les
 // classements provisoires des poules en cours.
 function renderTLiveViews() {
   renderTAdminPanel();
-  renderTLiveFinalsPanel();
+  renderTLiveMatchesPanel();
   if (tState && tState.status === 'playing') renderTPools();
 }
 
@@ -1215,22 +1215,24 @@ function renderTAdminPanel() {
 }
 
 // ============================================================
-//  FINALES EN DIRECT (visible de TOUTES les équipes, pas seulement
-//  l'hôte) — scores en direct de la petite finale et de la finale une
-//  fois lancées par l'hôte, avec un lien pour les suivre en spectateur
-//  sur son propre terminal (utile aux équipes déjà éliminées comme aux
-//  qualifiées qui ne jouent pas ce match-là).
+//  MATCHS EN COURS (visible de TOUTES les équipes, pas seulement
+//  l'hôte) — liste tous les matchs actuellement en cours, aussi bien en
+//  phase de poules (plusieurs en parallèle) qu'en phase finale (un seul
+//  à la fois, lancé séquentiellement par l'hôte — voir hostLaunchFinals).
+//  Utile à une équipe qui attend son prochain adversaire, déjà éliminée,
+//  ou simplement spectatrice : elle choisit lequel suivre, soit affiché
+//  directement ici via "👁 Regarder ici" (un seul plateau intégré à la
+//  fois), soit ouvert à part via "↗ Ouvrir dans un nouvel onglet".
 // ============================================================
-function renderTLiveFinalsPanel() {
+function renderTLiveMatchesPanel() {
   closeStaleSpectateWindows();
-  const section = document.getElementById('t-live-finals-panel');
+  const section = document.getElementById('t-live-matches-panel');
   if (!section || !tState) return;
 
-  const ko = tState.knockout || {};
-  // Petite finale d'abord, finale ensuite : même ordre que le lancement
-  // séquentiel (hostLaunchFinals) et que l'arbre (renderTKnockout).
-  const entries = [['🥈 Petite finale (3e/4e place)', ko.bronze], ['🏆 Finale', ko.final]]
-    .filter(([, m]) => !!m);
+  // On n'affiche pas ici le match de l'équipe elle-même : elle a déjà son
+  // propre bouton "🎮 Rejoindre mon match" dans t-my-match-panel.
+  const myRoomCode = findMyCurrentMatch();
+  const entries = tLiveMatchesInfo.filter(m => m.roomCode !== myRoomCode);
 
   if (entries.length === 0) {
     section.style.display = 'none';
@@ -1239,26 +1241,36 @@ function renderTLiveFinalsPanel() {
   }
   section.style.display = 'block';
 
+  // Sélection automatique quand un seul match est à regarder (cas
+  // fréquent des finales, lancées une à la fois) ; sinon on attend un
+  // choix explicite via "👁 Regarder ici". Si le match affiché s'est
+  // terminé entre-temps (ou n'est plus visible ici), même règle.
+  const stillLive = entries.some(m => m.roomCode === tLiveBoardRoomCode);
+  if (!stillLive) setLiveBoardEmbed(entries.length === 1 ? entries[0].roomCode : null);
+
   const registry = [];
-  const html = entries.map(([label, m]) => {
+  const html = entries.map(m => {
     const room = tLiveRooms[m.roomCode];
-    const teamsHtml = [m.teamA, m.teamB].map(id => {
+    const teamsHtml = m.teamIds.map(id => {
       const p = room && room.players ? room.players[id] : null;
       const score = p ? (p.score || 0) : 0;
       const isTurn = room && room.currentPlayer === id;
-      return `<span class="t-finals-team${isTurn ? ' t-finals-turn' : ''}">${isTurn ? '▶ ' : ''}${escapeTHtml(teamName(id))} — ${score} ⭐</span>`;
-    }).join(' <span class="t-finals-vs">vs</span> ');
-    const statusTxt = m.status === 'done' ? `✅ ${escapeTHtml(teamName(m.winnerId))} gagne` : '🔴 En direct';
+      return `<span class="t-live-match-team${isTurn ? ' t-live-match-turn' : ''}">${isTurn ? '▶ ' : ''}${escapeTHtml(teamName(id))} — ${score} ⭐</span>`;
+    }).join(m.teamIds.length === 2 ? ' <span class="t-live-match-vs">vs</span> ' : ' · ');
+    const watching = m.roomCode === tLiveBoardRoomCode;
     const linkIdx = registry.push({ link: getMatchSpectateLink(m.roomCode), roomCode: m.roomCode }) - 1;
-    return `<div class="t-finals-card">
-      <h4>${escapeTHtml(label)}</h4>
-      <p class="t-finals-teams">${teamsHtml}</p>
-      <p class="t-finals-status">${statusTxt}</p>
-      <button class="small-btn" data-link-idx="${linkIdx}">↗ Ouvrir dans un nouvel onglet</button>
+    return `<div class="t-live-match-card${watching ? ' t-watching' : ''}">
+      <h4>${escapeTHtml(m.label)}</h4>
+      <p class="t-live-match-teams">${teamsHtml}</p>
+      <p class="t-live-match-status">🔴 En direct</p>
+      <div class="t-live-match-actions">
+        <button class="small-btn" data-link-idx="${linkIdx}" data-watch-btn>${watching ? '✅ Vous regardez ce match' : '👁 Regarder ici'}</button>
+        <button class="small-btn" data-link-idx="${linkIdx}" data-open-btn>↗ Nouvel onglet</button>
+      </div>
     </div>`;
   }).join('');
 
-  const container = document.getElementById('t-live-finals-matches');
+  const container = document.getElementById('t-live-matches-list');
   container.innerHTML = html;
   container.querySelectorAll('[data-link-idx]').forEach(el => {
     const entry = registry[Number(el.getAttribute('data-link-idx'))];
@@ -1268,49 +1280,44 @@ function renderTLiveFinalsPanel() {
   if (!container.__wired) {
     container.__wired = true;
     container.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-link-idx]');
-      if (!btn || !btn.__link) return;
-      openSpectateWindow(btn.__link, btn.__roomCode);
+      const watchBtn = e.target.closest('[data-watch-btn]');
+      if (watchBtn && watchBtn.__roomCode) {
+        setLiveBoardEmbed(watchBtn.__roomCode);
+        renderTLiveMatchesPanel(); // ré-affiche tout de suite le nouveau choix (surbrillance + libellé du bouton)
+        return;
+      }
+      const openBtn = e.target.closest('[data-open-btn]');
+      if (openBtn && openBtn.__link) openSpectateWindow(openBtn.__link, openBtn.__roomCode);
     });
   }
-
-  // Plateau intégré : montre directement la grille de jeu du match EN
-  // COURS (au plus un seul à la fois, grâce au lancement séquentiel),
-  // en plus du lien ci-dessus qui l'ouvre dans un nouvel onglet.
-  const playing = entries.map(([, m]) => m).find(m => m.status === 'playing');
-  setLiveBoardEmbed(playing ? playing.roomCode : null);
 }
 
-// Ouvre un onglet "Ouvrir dans un nouvel onglet" (bouton du panneau
-// "Finales en direct") et en garde une référence — comme openMyCurrentMatch()
-// pour "Rejoindre mon match" — afin de pouvoir le refermer nous-mêmes une
-// fois ce match terminé (voir closeStaleSpectateWindows) : sinon, quiconque
-// suit la finale/petite finale via ce bouton (équipe en train de jouer qui
-// a cliqué ici plutôt que sur son propre bouton de match, équipe éliminée,
-// hôte/VPI...) reste bloqué sur la salle d'attente générique du jeu normal.
+// Ouvre un onglet "Nouvel onglet" (bouton du panneau "Matchs en cours") et
+// en garde une référence — comme openMyCurrentMatch() pour "Rejoindre mon
+// match" — afin de pouvoir le refermer nous-mêmes une fois ce match terminé
+// (voir closeStaleSpectateWindows) : sinon, quiconque suit un match via ce
+// bouton (équipe en attente, équipe éliminée, hôte/VPI...) reste bloqué sur
+// la salle d'attente générique du jeu normal.
 function openSpectateWindow(link, roomCode) {
   const w = window.open(link, '_blank');
   if (w) tSpectateWindows.push({ ref: w, roomCode });
 }
 
-// Referme automatiquement les onglets ouverts via le bouton "Ouvrir dans un
-// nouvel onglet" du panneau "Finales en direct" (voir renderTLiveFinalsPanel)
-// dès que le match qu'ils affichent est terminé — même logique que
-// closeStaleMatchWindow() pour "Rejoindre mon match", mais ici pour
-// plusieurs onglets potentiellement ouverts (spectateurs multiples,
-// équipe qui a cliqué ici plutôt que sur son propre bouton de match...).
+// Referme automatiquement les onglets ouverts via le bouton "Nouvel onglet"
+// du panneau "Matchs en cours" (voir renderTLiveMatchesPanel) dès que le
+// match qu'ils affichent n'est plus en cours (terminé, ou salle réutilisée
+// pour une autre manche) — même logique que closeStaleMatchWindow() pour
+// "Rejoindre mon match", mais ici pour plusieurs onglets potentiellement
+// ouverts (spectateurs multiples, poules jouées en parallèle...).
+// S'appuie sur tLiveMatchesInfo (voir collectActiveMatches), déjà tenu à
+// jour pour le panneau admin — donc valable aussi bien pour un match de
+// poule que pour une finale, sans distinction à faire ici.
 function closeStaleSpectateWindows() {
   if (tSpectateWindows.length === 0) return;
-  const ko = (tState && tState.knockout) || {};
-  const doneRoomCodes = new Set(
-    ['bronze', 'final']
-      .map(key => ko[key])
-      .filter(m => m && m.status === 'done')
-      .map(m => m.roomCode)
-  );
+  const activeRoomCodes = new Set(tLiveMatchesInfo.map(m => m.roomCode));
   tSpectateWindows = tSpectateWindows.filter(entry => {
     if (!entry.ref || entry.ref.closed) return false; // déjà fermé (par l'utilisateur ou nous-mêmes) : on l'oublie
-    if (!doneRoomCodes.has(entry.roomCode)) return true; // match encore en cours : on garde l'onglet ouvert
+    if (activeRoomCodes.has(entry.roomCode)) return true; // match encore en cours : on garde l'onglet ouvert
     try { entry.ref.close(); } catch (e) { /* onglet déjà fermé ou hors de portée */ }
     return false;
   });
@@ -1349,7 +1356,7 @@ function renderTDashboard() {
   document.getElementById('t-dash-code').textContent = tournamentCode;
   renderTMyMatchPanel();
   renderTAdminPanel();
-  renderTLiveFinalsPanel();
+  renderTLiveMatchesPanel();
   renderTPools();
   renderTKnockout();
   renderTFinalStandings();
