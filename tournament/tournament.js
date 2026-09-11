@@ -99,6 +99,10 @@ async function proceedFromTLogin() {
   errEl.textContent = '';
 
   if (!tournamentCode) { errEl.textContent = 'Entrez un code de tournoi.'; return; }
+  if (!/^[A-Za-z0-9_-]{3,16}$/.test(tournamentCode)) {
+    errEl.textContent = 'Le code de tournoi doit contenir entre 3 et 16 caractères (lettres, chiffres, - ou _), sans espace ni accent.';
+    return;
+  }
   if (!amSpectator && !myTeamName) { errEl.textContent = "Entrez le nom de l'équipe."; return; }
 
   const btn = document.getElementById('t-btn-join');

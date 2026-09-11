@@ -200,6 +200,10 @@ async function proceedFromLogin() {
   errEl.textContent = '';
 
   if (!roomCode) { errEl.textContent = 'Entrez un code de partie.'; return; }
+  if (!/^[A-Za-z0-9_-]{3,16}$/.test(roomCode)) {
+    errEl.textContent = 'Le code de partie doit contenir entre 3 et 16 caractères (lettres, chiffres, - ou _), sans espace ni accent.';
+    return;
+  }
 
   const checkRef = db.ref('rooms/' + roomCode);
   const snap = await checkRef.once('value');
